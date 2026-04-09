@@ -14,6 +14,7 @@
 - `scripts/unity-active-and-play.py` 保持为核心单文件实现脚本。
 - 脚本职责固定为：激活 Unity Editor、等待空闲、搜索 Play、点击 Play、持续监控错误。
 - 错误监控以 Unity `Editor.log` 为主信号，右下角状态区监控为补充信号。
+- `--debug` 调试截图默认输出到 `logs/unity-auto-play/`。
 - “等待编译完成”当前不是通过 Unity 内部 API 判断，而是通过以下外部信号组合判断：
   - `Editor.log` 在一段时间内没有新增输出。
   - 右下角状态区连续多个采样保持稳定。
@@ -23,6 +24,10 @@
 
 - 不直接使用 Win32 API，也不要在这个脚本里手写 `pywin32` 级别调用。
 - 窗口激活优先使用 `PyWinCtl`，不要把 `PyAutoGUI` 当成首选窗口管理方案。
+- 窗口所属应用名优先通过进程 PID + `psutil` 获取，不再调用 `PyWinCtl.getAppName()`，避免在 Windows 上卡进 WMI 查询。
+- Windows 上如果 `PyWinCtl` 常规激活失败，可回退到 `pywinauto` 的 UI Automation 路径，点击任务栏里的 Unity 运行中应用按钮；这属于高层外部自动化兜底，不是手写 Win32。
+- Unity 窗口筛选优先参考窗口所属应用名，不要只根据标题里是否包含 `Unity` 判断，否则项目名或路径里带 `Unity` 时容易误选到 VS Code。
+- 窗口尚未确认切到前台前，不要通过屏幕坐标盲点标题栏，否则可能误点到 VS Code 或其他前台程序。
 - 输入和点击当前使用 `PyAutoGUI`。
 - 截图和局部图像比较当前使用 `Pillow`。
 - Play 按钮识别当前使用“顶部工具栏中心区域三角形启发式搜索”，并保留了几何中心兜底。

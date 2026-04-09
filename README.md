@@ -28,7 +28,7 @@ uv run python scripts/unity-active-and-play.py
 
 当前的 `unity-active-and-play.py` 按如下流程工作：
 
-1. 查找并激活 Unity Editor 窗口。
+1. 查找并激活 Unity Editor 窗口；Windows 上如果常规窗口激活失败，会回退到任务栏里的 Unity 运行中应用按钮。
 2. 监听 Unity `Editor.log`，把它作为错误监控主信号。
 3. 轮询 Unity 窗口右下角状态区，把视觉稳定性和疑似红色错误提示作为补充信号。
 4. 在顶部工具栏中心区域搜索 Play 按钮的三角形图标。
