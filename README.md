@@ -9,10 +9,13 @@
 默认使用 `uv` 管理本地 Python 环境，无需手动维护 `venv` 激活状态。
 
 ```powershell
+git clone git@github.com:YXHXianYu/denia-agent-toolkit.git
+cd denia-agent-toolkit
+
 uv venv
 uv pip install --python .venv -r requirements.txt
-uv run server.py
-uv run scripts/unity-active-and-play.py
+uv run python server.py
+uv run python scripts/unity-active-and-play.py
 ```
 
 当前 `requirements.txt` 仅保留占位说明；后续按真实依赖补充即可。
