@@ -11,7 +11,7 @@
 
 ## Unity Auto Play 约定
 
-- `scripts/unity-active-and-play.py` 保持为核心单文件实现脚本。
+- `scripts/unity-auto-play.py` 保持为核心单文件实现脚本。
 - 脚本职责固定为：激活 Unity Editor、等待空闲、搜索 Play、点击 Play、持续监控错误。
 - 错误监控以 Unity `Editor.log` 为主信号，右下角状态区监控为补充信号。
 - `--debug` 调试截图默认输出到 `logs/unity-auto-play/`。

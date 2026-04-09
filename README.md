@@ -19,14 +19,14 @@ cd denia-agent-toolkit
 uv venv
 uv sync
 uv run python server.py
-uv run python scripts/unity-active-and-play.py
+uv run python scripts/unity-auto-play.py
 ```
 
 `uv run` 会自动使用项目环境；首次使用前建议显式执行一次 `uv sync`。
 
 ### Unity Auto Play
 
-当前的 `unity-active-and-play.py` 按如下流程工作：
+当前的 `unity-auto-play.py` 按如下流程工作：
 
 1. 查找并激活 Unity Editor 窗口；Windows 上如果常规窗口激活失败，会回退到任务栏里的 Unity 运行中应用按钮。
 2. 监听 Unity `Editor.log`，把它作为错误监控主信号。
@@ -38,7 +38,7 @@ uv run python scripts/unity-active-and-play.py
 ### 运行示例
 
 ```powershell
-uv run python scripts/unity-active-and-play.py --debug
+uv run python scripts/unity-auto-play.py --debug
 ```
 
 常用参数：
