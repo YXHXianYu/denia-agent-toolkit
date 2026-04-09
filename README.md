@@ -1,14 +1,12 @@
 # denia-agent-toolkit
 
-一个面向图形与引擎研发的本地 agent 工具集，后续统一收纳 Unity、UE、RenderDoc 等自动化能力。
-仓库采用双入口：`server.py` 作为 MCP 入口，`SKILL.md` 作为高层工作流入口；具体动作下沉到 `scripts/` 独立脚本。
-当前仓库仍然是轻量骨架，但 `scripts/unity-active-and-play.py` 已经具备首版可运行实现。
+> 达妮娅可爱捏😋😋
 
-## 当前状态
+一个面向图形与引擎研发的本地 agent 工具集
 
-- `server.py` 仍然是 MCP 入口占位。
-- `SKILL.md` 仍然是高层工作流占位。
-- `scripts/unity-active-and-play.py` 已实现 Unity Editor 自动激活、等待空闲、搜索 Play 按钮、点击 Play、以及运行期日志监控。
+功能涵盖：Unity、UE、RenderDoc
+
+使用方式支持：直接运行python脚本、Skill、MCP
 
 ## 使用
 
@@ -26,7 +24,7 @@ uv run python scripts/unity-active-and-play.py
 
 `uv run` 会自动使用项目环境；首次使用前建议显式执行一次 `uv sync`。
 
-## Unity Auto Play
+### Unity Auto Play
 
 当前的 `unity-active-and-play.py` 按如下流程工作：
 
@@ -37,7 +35,7 @@ uv run python scripts/unity-active-and-play.py
 5. 等待“日志安静 + 状态区稳定 + Play 按钮稳定出现”后再点击 Play。
 6. 点击后对按钮局部区域做一次视觉校验，确认状态发生变化。
 
-## 运行示例
+### 运行示例
 
 ```powershell
 uv run python scripts/unity-active-and-play.py --debug
@@ -49,21 +47,4 @@ uv run python scripts/unity-active-and-play.py --debug
 - `--activation-timeout`：激活 Unity 窗口时的超时时间。
 - `--verify-timeout`：点击 Play 后验证状态变化的超时时间。
 - `--editor-log`：手动指定 `Editor.log` 路径。
-- `--debug`：保存工具栏和右下角状态区截图，便于调试。
-
-## 当前假设与限制
-
-- 当前实现以 Windows 为优先目标。
-- 当前验证目标环境是 Unity 2022 LTS、中文界面、Pro-Dark 主题。
-- 代码避免直接使用 Win32 API；窗口激活依赖 `PyWinCtl`，输入与截图依赖 `PyAutoGUI` 和 `Pillow`。
-- Play 按钮识别采用“顶部工具栏中心区域的三角形启发式搜索 + 几何兜底”，不是 Unity 内部 API 级别的精确状态查询。
-- 为了降低误触发风险，建议运行脚本时让 Unity Editor 窗口保持可见，且尽量放在主显示器。
-
-## 依赖管理
-
-本仓库现在使用：
-
-- `pyproject.toml`：声明项目依赖与元数据。
-- `uv.lock`：锁定精确依赖版本。
-
-不再维护 `requirements.txt`。
+- `--debug`：保存工具栏和右下角状态区截图，便于调试，默认输出到 `logs/unity-auto-play/`。
