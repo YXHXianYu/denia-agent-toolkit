@@ -93,8 +93,13 @@ Use the existing script as a black-box workflow when the request is already supp
 Preferred commands:
 
 ```powershell
+# 当前目录是 denia-agent-toolkit 仓库根目录
 uv run python scripts/unity-auto-play.py --help
 uv run python scripts/unity-auto-play.py --debug
+
+# 当前目录是宿主项目根目录，toolkit 安装在 .claude/skills/denia-agent-toolkit
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --help
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --debug
 ```
 
 If the user asks about MCP routing or tool registration, explain that [server.py](server.py) is implemented as a minimal wrapper server today, and that broader MCP tool coverage is still pending.

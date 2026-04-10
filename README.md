@@ -26,7 +26,11 @@ uv sync
 自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式。
 
 ```powershell
-uv run python .claude/skills/scripts/unity-auto-play.py --debug
+# 当前目录是 .claude/skills/denia-agent-toolkit
+uv run python scripts/unity-auto-play.py --debug
+
+# 当前目录是宿主项目根目录
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --debug
 ```
 
 输出示例
@@ -66,8 +70,13 @@ OnRenderImage() possibly didn't write anything to the destination texture!
 当前已实现最小 FastMCP server，封装现有 Unity workflow。
 
 ```powershell
+# 当前目录是 .claude/skills/denia-agent-toolkit
 uv run python server.py
 uv run mcp dev server.py
+
+# 当前目录是宿主项目根目录
+uv run python .claude/skills/denia-agent-toolkit/server.py
+uv run mcp dev .claude/skills/denia-agent-toolkit/server.py
 ```
 
 ## 开发
