@@ -304,7 +304,7 @@ def log_strategy(config: Config) -> None:
     log(
         "策略 日志="
         f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
-        f"因为Editor.log无法完整过滤出日志，所以每个日志会往前包含{KEY_MESSAGE_LINE_LIMIT}行再进行去重"
+        f"前{KEY_MESSAGE_LINE_LIMIT}行去重+自动停Play"
     )
 
 
@@ -349,7 +349,11 @@ def print_captured_logs(summary: list[tuple[str, int]], wait_seconds: float) -> 
         log(f"Play后{wait_seconds:.0f}s无新增日志")
         return
 
-    log(f"Play后关键日志 {wait_seconds:.0f}s:")
+
+    log(
+        f"Play后关键日志 {wait_seconds:.0f}s。"
+        f"因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含{KEY_MESSAGE_LINE_LIMIT}行。如果你发现日志被截断，请调整参数"
+    )
     for index, (message, count) in enumerate(summary, start=1):
         print(f"[UnityAutoPlay][日志 {index}][x{count}]\n{message}\n", flush=True)
 
@@ -1134,6 +1138,64 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
     raise UnityAutomationError("已点击 Play，但无法确认 Unity 真的进入了播放模式。")
 
 
+def resolve_current_play_candidate(window: Any) -> PlayCandidate:
+    current_window_box = window_box(window)
+    toolbar_box = build_toolbar_box(current_window_box)
+    toolbar_image = grab_box(toolbar_box)
+    candidate = find_play_candidate(toolbar_image, toolbar_box, current_window_box)
+    if candidate is not None:
+        return candidate
+    return estimate_play_candidate(toolbar_box, current_window_box)
+
+
+def stop_play_button(window: Any, config: Config) -> None:
+    candidate = resolve_current_play_candidate(window)
+    current_window_box = window_box(window)
+    verification_box = clamp_sample_box(
+        Box(candidate.center_x - 32, candidate.center_y - 24, 64, 48),
+        current_window_box,
+    )
+    mouse_park_x, mouse_park_y = parking_point(current_window_box, verification_box)
+
+    activate_window(window, config)
+    pyautogui.moveTo(mouse_park_x, mouse_park_y)
+    time.sleep(config.poll_interval)
+
+    before_image = grab_box(verification_box)
+    before_blue_ratio = blue_ratio(before_image)
+    pyautogui.click(candidate.center_x, candidate.center_y)
+    log(f"10s到, 停Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
+
+    time.sleep(0.08)
+    pyautogui.moveTo(mouse_park_x, mouse_park_y)
+
+    deadline = time.monotonic() + config.verify_timeout
+    after_image = before_image
+    stable_verifications = 0
+    while time.monotonic() < deadline:
+        time.sleep(config.poll_interval)
+        after_image = grab_box(verification_box)
+        diff_score = image_difference_score(before_image, after_image)
+        after_blue_ratio = blue_ratio(after_image)
+        blue_drop = before_blue_ratio - after_blue_ratio
+        if diff_score >= 8.0 or blue_drop >= 0.015:
+            stable_verifications += 1
+        else:
+            stable_verifications = 0
+
+        if stable_verifications >= 2:
+            if config.debug:
+                save_debug_image(config, before_image, "play-stop-before")
+                save_debug_image(config, after_image, "play-stop-verified")
+            log("已停Play")
+            return
+
+    if config.debug:
+        save_debug_image(config, before_image, "play-stop-before-timeout")
+        save_debug_image(config, after_image, "play-stop-after-timeout")
+    raise UnityAutomationError("10s后已尝试停Play, 但未确认退出Play。")
+
+
 def wait_and_print_post_play_logs(
     log_monitor: EditorLogMonitor,
     config: Config,
@@ -1240,7 +1302,9 @@ def main(argv: list[str] | None = None) -> int:
         click_play_button(unity_window, candidate, log_monitor, config)
 
         log("已进入Play")
-        if wait_and_print_post_play_logs(log_monitor, config, play_log_marker):
+        has_post_play_error = wait_and_print_post_play_logs(log_monitor, config, play_log_marker)
+        stop_play_button(unity_window, config)
+        if has_post_play_error:
             raise UnityAutomationError("进入 Play 模式后的观察期内，Unity Editor.log 中出现了新的错误。")
         return 0
     except UnityAutomationError as exc:

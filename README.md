@@ -24,7 +24,7 @@ uv run python scripts/unity-auto-play.py --help
 
 ### Unity Auto Play
 
-自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端。
+自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式。
 
 ```powershell
 uv run python scripts/unity-auto-play.py --debug
