@@ -48,31 +48,13 @@ mcp = FastMCP(
 
 def build_unity_auto_play_command(
     *,
-    debug: bool,
-    editor_log: str | None,
-    activation_timeout: float,
-    compile_timeout: float,
-    verify_timeout: float,
-    poll_interval: float,
     renderdoc_capture: bool,
-    renderdoc_template: str | None,
     debug_dir: str,
 ) -> list[str]:
     command = [sys.executable, str(UNITY_AUTO_PLAY_SCRIPT)]
 
-    if debug:
-        command.append("--debug")
     if renderdoc_capture:
         command.append("--renderdoc-capture")
-    if renderdoc_template:
-        command.extend(["--renderdoc-template", renderdoc_template])
-    if editor_log:
-        command.extend(["--editor-log", editor_log])
-
-    command.extend(["--activation-timeout", str(activation_timeout)])
-    command.extend(["--timeout", str(compile_timeout)])
-    command.extend(["--verify-timeout", str(verify_timeout)])
-    command.extend(["--poll-interval", str(poll_interval)])
     command.extend(["--debug-dir", debug_dir])
     return command
 
@@ -157,26 +139,12 @@ async def unity_auto_play_help(ctx: Context[ServerSession, None]) -> CommandResu
 @mcp.tool()
 async def unity_auto_play_run(
     ctx: Context[ServerSession, None],
-    debug: bool = False,
-    editor_log: str | None = None,
-    activation_timeout: float = 12.0,
-    compile_timeout: float = 300.0,
-    verify_timeout: float = 5.0,
-    poll_interval: float = 0.35,
     renderdoc_capture: bool = False,
-    renderdoc_template: str | None = None,
     debug_dir: str = "logs/unity-auto-play",
 ) -> CommandResult:
     """Run the external Unity auto-play workflow that activates Unity, enters Play, optionally triggers a template-matched RenderDoc capture 1 second before Play stops, captures logs, and exits Play."""
     command = build_unity_auto_play_command(
-        debug=debug,
-        editor_log=editor_log,
-        activation_timeout=activation_timeout,
-        compile_timeout=compile_timeout,
-        verify_timeout=verify_timeout,
-        poll_interval=poll_interval,
         renderdoc_capture=renderdoc_capture,
-        renderdoc_template=renderdoc_template,
         debug_dir=debug_dir,
     )
     return await run_command(command, ctx=ctx)

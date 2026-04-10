@@ -27,12 +27,12 @@ uv sync
 
 ```powershell
 # 当前目录是 .claude/skills/denia-agent-toolkit
-uv run python scripts/unity-auto-play.py --debug
-uv run python scripts/unity-auto-play.py --renderdoc-capture --debug
+uv run python scripts/unity-auto-play.py
+uv run python scripts/unity-auto-play.py --renderdoc-capture
 
 # 当前目录是宿主项目根目录
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --debug
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture --debug
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture
 ```
 
 输出示例

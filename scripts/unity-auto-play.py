@@ -26,7 +26,19 @@ pyautogui.PAUSE = 0.05
 
 # Keep only the last few lines nearest to StackTraceUtility to avoid swallowing unrelated Editor.log noise.
 KEY_MESSAGE_LINE_LIMIT = 5
-RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS = 1.0
+RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS = 2.0
+DEFAULT_ACTIVATION_TIMEOUT = 12.0
+DEFAULT_COMPILE_TIMEOUT = 300.0
+DEFAULT_POST_PLAY_LOG_WAIT_SECONDS = 10.0
+DEFAULT_VERIFY_TIMEOUT = 5.0
+DEFAULT_POLL_INTERVAL = 0.35
+DEFAULT_LOG_QUIET_SECONDS = max(DEFAULT_POLL_INTERVAL * 2.5, 1.0)
+DEFAULT_REQUIRED_PLAY_STABILITY = 3
+DEFAULT_REQUIRED_STATUS_STABILITY = 5
+DEFAULT_STATUS_HASH_DISTANCE = 3
+DEFAULT_STATUS_RED_RATIO_THRESHOLD = 0.0045
+DEFAULT_STATUS_RED_SAMPLES = 3
+DEFAULT_DEBUG_DIR = Path("logs/unity-auto-play")
 PLAY_TEMPLATE_MATCH_THRESHOLD = 0.78
 RENDERDOC_TEMPLATE_MATCH_THRESHOLD = 0.78
 TEMPLATE_MATCH_SCALES = (0.90, 0.95, 1.0, 1.05, 1.10)
@@ -78,24 +90,19 @@ def matches_error_line(line: str) -> bool:
 
 @dataclass(frozen=True)
 class Config:
-    activation_timeout: float
-    compile_timeout: float
-    post_play_log_wait_seconds: float
-    verify_timeout: float
-    poll_interval: float
-    log_quiet_seconds: float
-    required_play_stability: int
-    required_status_stability: int
-    status_hash_distance: int
-    status_red_ratio_threshold: float
-    status_red_samples: int
-    play_idle_template_path: Path
-    play_active_template_path: Path
-    renderdoc_capture: bool
-    renderdoc_template_path: Path
-    debug: bool
-    debug_dir: Path
-    editor_log_path: Path | None
+    activation_timeout: float = DEFAULT_ACTIVATION_TIMEOUT
+    compile_timeout: float = DEFAULT_COMPILE_TIMEOUT
+    post_play_log_wait_seconds: float = DEFAULT_POST_PLAY_LOG_WAIT_SECONDS
+    verify_timeout: float = DEFAULT_VERIFY_TIMEOUT
+    poll_interval: float = DEFAULT_POLL_INTERVAL
+    log_quiet_seconds: float = DEFAULT_LOG_QUIET_SECONDS
+    required_play_stability: int = DEFAULT_REQUIRED_PLAY_STABILITY
+    required_status_stability: int = DEFAULT_REQUIRED_STATUS_STABILITY
+    status_hash_distance: int = DEFAULT_STATUS_HASH_DISTANCE
+    status_red_ratio_threshold: float = DEFAULT_STATUS_RED_RATIO_THRESHOLD
+    status_red_samples: int = DEFAULT_STATUS_RED_SAMPLES
+    renderdoc_capture: bool = False
+    debug_dir: Path = DEFAULT_DEBUG_DIR
 
 
 @dataclass(frozen=True)
@@ -388,10 +395,7 @@ def print_captured_logs(summary: list[tuple[str, int]], wait_seconds: float) -> 
         print(f"[UnityAutoPlay][日志 {index}][x{count}]\n{message}\n", flush=True)
 
 
-def save_debug_image(config: Config, image: Image.Image, stem: str) -> Path | None:
-    if not config.debug:
-        return None
-
+def save_debug_image(config: Config, image: Image.Image, stem: str) -> Path:
     config.debug_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     safe_stem = stem.replace(" ", "-").replace("/", "-")
@@ -408,10 +412,7 @@ def sleep_until(deadline: float) -> None:
         time.sleep(remaining)
 
 
-def resolve_editor_log_path(override: Path | None) -> Path:
-    if override is not None:
-        return override.expanduser()
-
+def resolve_editor_log_path() -> Path:
     system = platform.system()
     if system == "Windows":
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -739,9 +740,8 @@ ACTIVATION_STRATEGIES: tuple[tuple[str, Callable[[Any], None]], ...] = (
 )
 
 
-def debug_log(config: Config, message: str) -> None:
-    if config.debug:
-        log(message)
+def debug_log(message: str) -> None:
+    log(message)
 
 
 def find_unity_window() -> Any:
@@ -785,7 +785,7 @@ def activate_window(window: Any, config: Config) -> Box:
         try:
             box = window_box(window)
             if is_window_active(window):
-                debug_log(config, "Unity已激活")
+                debug_log("Unity已激活")
                 return box
         except Exception:
             break
@@ -793,7 +793,7 @@ def activate_window(window: Any, config: Config) -> Box:
         if strategy_index < len(ACTIVATION_STRATEGIES):
             strategy_name, strategy_action = ACTIVATION_STRATEGIES[strategy_index]
             strategy_index += 1
-            debug_log(config, f"激活策略: {strategy_name}")
+            debug_log(f"激活策略: {strategy_name}")
             try:
                 strategy_action(window)
             except Exception:
@@ -801,13 +801,13 @@ def activate_window(window: Any, config: Config) -> Box:
         elif not taskbar_attempted and try_activate_window_via_taskbar(window, config):
             taskbar_attempted = True
             try:
-                debug_log(config, "任务栏激活成功")
+                debug_log("任务栏激活成功")
                 return window_box(window)
             except Exception:
                 break
         else:
             taskbar_attempted = True
-            debug_log(config, "重试activate")
+            debug_log("重试activate")
             try:
                 window.activate(wait=True, user=True)
             except Exception:
@@ -835,51 +835,6 @@ def build_status_box(box: Box) -> Box:
     left = box.right - width - 24
     top = box.bottom - height - 24
     return Box(left=left, top=top, width=width, height=height)
-
-
-def get_unity_pane_box(window: Any, pane_name: str) -> Box | None:
-    if platform.system() != "Windows":
-        return None
-
-    target_title = str(getattr(window, "title", "") or "").strip()
-    if not target_title:
-        return None
-
-    try:
-        from pywinauto import Desktop
-    except Exception:
-        return None
-
-    try:
-        for candidate in Desktop(backend="uia").windows():
-            if str(candidate.window_text() or "").strip() != target_title:
-                continue
-            for child in candidate.children():
-                if str(child.window_text() or "").strip() != pane_name:
-                    continue
-                rect = child.rectangle()
-                if rect.right <= rect.left or rect.bottom <= rect.top:
-                    return None
-                return Box(
-                    left=int(rect.left),
-                    top=int(rect.top),
-                    width=int(rect.right - rect.left),
-                    height=int(rect.bottom - rect.top),
-                )
-    except Exception:
-        return None
-
-    return None
-
-
-def build_game_view_toolbar_box(game_view_box: Box) -> Box:
-    height = max(36, min(48, game_view_box.height // 12 + 8))
-    return Box(
-        left=game_view_box.left,
-        top=game_view_box.top,
-        width=game_view_box.width,
-        height=height,
-    )
 
 
 def clamp_sample_box(sample_box: Box, outer_box: Box) -> Box:
@@ -1038,7 +993,7 @@ def find_play_idle_candidate(
         toolbar_image,
         toolbar_box,
         window_box_value,
-        template_path=config.play_idle_template_path,
+        template_path=DEFAULT_PLAY_IDLE_TEMPLATE_PATH,
         threshold=PLAY_TEMPLATE_MATCH_THRESHOLD,
         label="Play普通态",
     )
@@ -1054,7 +1009,7 @@ def find_play_active_candidate(
         toolbar_image,
         toolbar_box,
         window_box_value,
-        template_path=config.play_active_template_path,
+        template_path=DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH,
         threshold=PLAY_TEMPLATE_MATCH_THRESHOLD,
         label="Play激活态",
     )
@@ -1084,19 +1039,17 @@ def prepare_renderdoc_capture_target(window: Any, config: Config) -> RenderDocCa
         toolbar_image,
         toolbar_box,
         current_window_box,
-        config.renderdoc_template_path,
+        DEFAULT_RENDERDOC_TEMPLATE_PATH,
     )
     if candidate is None:
-        if config.debug:
-            save_debug_image(config, toolbar_image, "renderdoc-toolbar-miss")
+        save_debug_image(config, toolbar_image, "renderdoc-toolbar-miss")
         raise UnityAutomationError(
-            "RenderDoc 模板匹配失败，没有在 Game 视图顶条中找到 Capture 按钮。"
-            f"模板: {config.renderdoc_template_path}。"
-            "请确认模板裁剪准确、Game 视图可见且已启用 RenderDoc 集成。"
+            "RenderDoc 模板匹配失败，没有在 Unity 窗口截图中找到 Capture 按钮。"
+            f"模板: {DEFAULT_RENDERDOC_TEMPLATE_PATH}。"
+            "请确认模板裁剪准确、按钮可见且已启用 RenderDoc 集成。"
         )
 
-    if config.debug:
-        save_debug_image(config, toolbar_image, "renderdoc-toolbar-probe")
+    save_debug_image(config, toolbar_image, "renderdoc-toolbar-probe")
 
     return RenderDocCaptureTarget(
         window_box=current_window_box,
@@ -1108,33 +1061,23 @@ def prepare_renderdoc_capture_target(window: Any, config: Config) -> RenderDocCa
 def click_renderdoc_capture_target(
     capture_target: RenderDocCaptureTarget,
     *,
-    observation_started_at: float | None = None,
-    scheduled_elapsed_seconds: float | None = None,
+    observation_started_at: float,
+    scheduled_elapsed_seconds: float,
 ) -> None:
-    if observation_started_at is not None:
-        start_elapsed = time.monotonic() - observation_started_at
-        if scheduled_elapsed_seconds is None:
-            log(f"RenderDoc到时, 开始截帧: {start_elapsed:.2f}s")
-        else:
-            log(
-                "RenderDoc到时, 开始截帧: "
-                f"计划{scheduled_elapsed_seconds:.2f}s 实际开始{start_elapsed:.2f}s"
-            )
+    start_elapsed = time.monotonic() - observation_started_at
+    log(
+        "RenderDoc到时, 开始截帧: "
+        f"计划{scheduled_elapsed_seconds:.2f}s 实际开始{start_elapsed:.2f}s"
+    )
 
     pyautogui.click(capture_target.candidate.center_x, capture_target.candidate.center_y)
 
-    if observation_started_at is None:
-        log(
-            f"RenderDoc截帧: ({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
-            f"{capture_target.candidate.source}"
-        )
-    else:
-        click_elapsed = time.monotonic() - observation_started_at
-        log(
-            "RenderDoc已截帧: "
-            f"({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
-            f"{capture_target.candidate.source} 实际点击{click_elapsed:.2f}s"
-        )
+    click_elapsed = time.monotonic() - observation_started_at
+    log(
+        "RenderDoc已截帧: "
+        f"({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
+        f"{capture_target.candidate.source} 实际点击{click_elapsed:.2f}s"
+    )
 
     mouse_park_x, mouse_park_y = parking_point(capture_target.window_box, capture_target.toolbar_box)
     time.sleep(0.08)
@@ -1179,10 +1122,9 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
         status_image = grab_box(status_box)
         status_state = update_status_corner_state(status_image, status_state, config)
 
-        if config.debug and status_state.red_samples == config.status_red_samples:
+        if status_state.red_samples == config.status_red_samples:
             saved_path = save_debug_image(config, status_image, "status-corner-warning")
-            if saved_path is not None:
-                log(f"已保存状态截图: {saved_path}")
+            log(f"已保存状态截图: {saved_path}")
 
         log_quiet = log_monitor.seconds_since_activity() >= config.log_quiet_seconds
         if status_state.red_samples >= config.status_red_samples and not red_indicator_reported:
@@ -1211,9 +1153,8 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
 
         time.sleep(config.poll_interval)
 
-    if config.debug:
-        save_debug_image(config, toolbar_image, "toolbar-timeout")
-        save_debug_image(config, status_image, "status-timeout")
+    save_debug_image(config, toolbar_image, "toolbar-timeout")
+    save_debug_image(config, status_image, "status-timeout")
     raise UnityAutomationError("等待 Unity 编译或导入完成超时。")
 
 
@@ -1253,14 +1194,12 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
             stable_verifications = 0
 
         if stable_verifications >= 2:
-            if config.debug:
-                save_debug_image(config, before_image, "play-before")
-                save_debug_image(config, after_image, "play-verified")
+            save_debug_image(config, before_image, "play-before")
+            save_debug_image(config, after_image, "play-verified")
             return
 
-    if config.debug:
-        save_debug_image(config, before_image, "play-before-timeout")
-        save_debug_image(config, after_image, "play-after-timeout")
+    save_debug_image(config, before_image, "play-before-timeout")
+    save_debug_image(config, after_image, "play-after-timeout")
     raise UnityAutomationError("已点击 Play，但无法确认 Unity 真的进入了播放模式。")
 
 
@@ -1268,14 +1207,12 @@ def click_renderdoc_capture_button(
     window: Any,
     config: Config,
     *,
-    observation_started_at: float | None = None,
-    scheduled_elapsed_seconds: float | None = None,
-    capture_target: RenderDocCaptureTarget | None = None,
+    observation_started_at: float,
+    scheduled_elapsed_seconds: float,
 ) -> None:
-    if capture_target is None:
-        if not is_window_active(window):
-            activate_window(window, config)
-        capture_target = prepare_renderdoc_capture_target(window, config)
+    if not is_window_active(window):
+        activate_window(window, config)
+    capture_target = prepare_renderdoc_capture_target(window, config)
 
     click_renderdoc_capture_target(
         capture_target,
@@ -1293,7 +1230,7 @@ def resolve_current_play_candidate(window: Any, config: Config) -> PlayCandidate
         return candidate
     raise UnityAutomationError(
         "没有找到处于激活态的 Play 按钮。"
-        f"模板: {config.play_active_template_path}。"
+        f"模板: {DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH}。"
         "请确认当前确实已经进入 Play，且模板裁剪正确。"
     )
 
@@ -1330,15 +1267,13 @@ def stop_play_button(window: Any, config: Config) -> None:
             stable_verifications = 0
 
         if stable_verifications >= 2:
-            if config.debug:
-                save_debug_image(config, before_image, "play-stop-before")
-                save_debug_image(config, after_image, "play-stop-verified")
+            save_debug_image(config, before_image, "play-stop-before")
+            save_debug_image(config, after_image, "play-stop-verified")
             log("已停Play")
             return
 
-    if config.debug:
-        save_debug_image(config, before_image, "play-stop-before-timeout")
-        save_debug_image(config, after_image, "play-stop-after-timeout")
+    save_debug_image(config, before_image, "play-stop-before-timeout")
+    save_debug_image(config, after_image, "play-stop-after-timeout")
     raise UnityAutomationError("10s后已尝试停Play, 但未确认退出Play。")
 
 
@@ -1353,7 +1288,7 @@ def minimize_window(window: Any, config: Config) -> None:
             window.minimize(wait=True)
         except Exception as exc:
             log(f"停Play后最小化失败: {title}")
-            debug_log(config, f"最小化异常: {exc}")
+            debug_log(f"最小化异常: {exc}")
             return
 
     log("脚本执行完毕, 已最小化Unity, 请回到IDE")
@@ -1402,12 +1337,10 @@ def wait_and_print_post_play_logs(
                 and prepared_renderdoc_target is not None
                 and is_window_active(window)
             ):
-                click_renderdoc_capture_button(
-                    window,
-                    config,
+                click_renderdoc_capture_target(
+                    prepared_renderdoc_target,
                     observation_started_at=start_time,
                     scheduled_elapsed_seconds=renderdoc_wait_seconds,
-                    capture_target=prepared_renderdoc_target,
                 )
             else:
                 if prepared_renderdoc_target is not None:
@@ -1442,36 +1375,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="激活 Unity Editor，等待空闲，然后自动点击 Play。",
     )
     parser.add_argument(
-        "--editor-log",
-        type=Path,
-        default=None,
-        help="手动指定 Unity 的 Editor.log 路径。",
-    )
-    parser.add_argument(
-        "--activation-timeout",
-        type=float,
-        default=12.0,
-        help="激活 Unity 前台窗口时允许等待的秒数。",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=300.0,
-        help="点击 Play 前，等待 Unity 编译或导入完成的最长秒数。",
-    )
-    parser.add_argument(
-        "--verify-timeout",
-        type=float,
-        default=5.0,
-        help="点击 Play 后，验证是否成功进入播放模式的最长秒数。",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=float,
-        default=0.35,
-        help="窗口、日志、状态区轮询间隔，单位为秒。",
-    )
-    parser.add_argument(
         "--renderdoc-capture",
         action="store_true",
         help=(
@@ -1480,47 +1383,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--renderdoc-template",
-        type=Path,
-        default=DEFAULT_RENDERDOC_TEMPLATE_PATH,
-        help=(
-            "RenderDoc Capture 按钮模板图路径。默认读取仓库根目录下的 templates/renderdoc-capture-button.png。"
-        ),
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="保存调试截图。",
-    )
-    parser.add_argument(
         "--debug-dir",
         type=Path,
-        default=Path("logs/unity-auto-play"),
-        help="调试截图输出目录。",
+        default=DEFAULT_DEBUG_DIR,
+        help="调试截图输出目录。默认始终保存截图。",
     )
     return parser.parse_args(argv)
 
 
 def config_from_args(args: argparse.Namespace) -> Config:
     return Config(
-        activation_timeout=args.activation_timeout,
-        compile_timeout=args.timeout,
-        post_play_log_wait_seconds=10.0,
-        verify_timeout=args.verify_timeout,
-        poll_interval=args.poll_interval,
-        log_quiet_seconds=max(args.poll_interval * 2.5, 1.0),
-        required_play_stability=3,
-        required_status_stability=5,
-        status_hash_distance=3,
-        status_red_ratio_threshold=0.0045,
-        status_red_samples=3,
-        play_idle_template_path=DEFAULT_PLAY_IDLE_TEMPLATE_PATH,
-        play_active_template_path=DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH,
         renderdoc_capture=bool(args.renderdoc_capture),
-        renderdoc_template_path=args.renderdoc_template.expanduser(),
-        debug=bool(args.debug),
-        debug_dir=args.debug_dir,
-        editor_log_path=args.editor_log,
+        debug_dir=args.debug_dir.expanduser(),
     )
 
 
@@ -1532,7 +1406,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         log_strategy(config)
-        editor_log_path = resolve_editor_log_path(config.editor_log_path)
+        editor_log_path = resolve_editor_log_path()
         wait_for_path(editor_log_path, timeout=5.0)
         log(f"监控日志: {editor_log_path}")
 
