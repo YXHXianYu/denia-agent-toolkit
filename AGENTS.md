@@ -9,6 +9,10 @@
 - 新增依赖时优先使用 `uv add <package>`，不要手写改 `uv.lock`。
 - 运行脚本和做本地验证时优先使用 `uv run ...`。
 
+## 文档约定
+
+- README.md要尽可能简洁，把详细描述写在AGENTS.md中。
+
 ## Unity Auto Play 约定
 
 - `scripts/unity-auto-play.py` 保持为核心单文件实现脚本。
