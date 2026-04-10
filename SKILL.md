@@ -76,6 +76,8 @@ For the current Unity automation, the expected high-level behavior is:
 6. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
 7. Automatically stop Play after the observation window.
 
+If `Editor.log` reports an error immediately after clicking Play, describe the real behavior accurately: the script does not abort at once. It still tries to finish Play verification, the 10-second observation window, and automatic stop-Play cleanup before reporting the error.
+
 When explaining "how compile completion is detected", describe the real heuristic:
 
 - `Editor.log` has been quiet for a short window.

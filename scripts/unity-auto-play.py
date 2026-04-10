@@ -143,6 +143,7 @@ class EditorLogMonitor(threading.Thread):
         self._lock = threading.Lock()
         self._recent_lines: deque[str] = deque(maxlen=40)
         self._error_lines: deque[str] = deque(maxlen=20)
+        self._error_indices: deque[int] = deque(maxlen=64)
         self._captured_lines: deque[tuple[int, str]] = deque(maxlen=2000)
         self._recent_capture_window: deque[tuple[int, str]] = deque(maxlen=32)
         self._key_message_events: list[tuple[int, str]] = []
@@ -186,6 +187,10 @@ class EditorLogMonitor(threading.Thread):
 
     def has_error(self) -> bool:
         return self._error_event.is_set()
+
+    def has_error_since(self, marker: int) -> bool:
+        with self._lock:
+            return any(index > marker for index in self._error_indices)
 
     def capture_marker(self) -> int:
         with self._lock:
@@ -239,6 +244,7 @@ class EditorLogMonitor(threading.Thread):
                 self._key_message_events.append((self._line_index, key_message))
             if allow_error_match and self._matches_error(line):
                 self._error_lines.append(line)
+                self._error_indices.append(self._line_index)
                 self._error_event.set()
                 self._error_context_remaining = 6
             elif self._error_context_remaining > 0:
@@ -1103,6 +1109,7 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
 
     before_image = grab_box(verification_box)
     before_blue_ratio = blue_ratio(before_image)
+    verify_log_marker = log_monitor.capture_marker()
     pyautogui.click(candidate.center_x, candidate.center_y)
     log(f"已点Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
 
@@ -1111,10 +1118,11 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
 
     deadline = time.monotonic() + config.verify_timeout
     after_image = before_image
+    error_seen_during_verify = False
     stable_verifications = 0
     while time.monotonic() < deadline:
-        if log_monitor.has_error():
-            raise UnityAutomationError("点击 Play 后，Unity Editor.log 中立即出现了错误。")
+        if not error_seen_during_verify and log_monitor.has_error_since(verify_log_marker):
+            error_seen_during_verify = True
 
         time.sleep(config.poll_interval)
         after_image = grab_box(verification_box)
