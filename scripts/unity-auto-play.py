@@ -61,6 +61,11 @@ IGNORE_ERROR_PATTERNS = (
     re.compile(r"\bwithout errors\b", re.IGNORECASE),
 )
 
+IGNORED_CAPTURED_LOG_SUBSTRINGS = (
+    "EndLayoutGroup: BeginLayoutGroup must be called first.",
+    "OnRenderImage() possibly didn't write anything to the destination texture!",
+)
+
 STACKTRACE_MARKER = "UnityEngine.StackTraceUtility:ExtractStackTrace ()"
 
 IGNORED_KEY_LINE_PATTERNS = (
@@ -82,7 +87,13 @@ class UnityAutomationError(RuntimeError):
     pass
 
 
+def contains_ignored_captured_log(text: str) -> bool:
+    return any(ignored_text in text for ignored_text in IGNORED_CAPTURED_LOG_SUBSTRINGS)
+
+
 def matches_error_line(line: str) -> bool:
+    if contains_ignored_captured_log(line):
+        return False
     if any(pattern.search(line) for pattern in IGNORE_ERROR_PATTERNS):
         return False
     return any(pattern.search(line) for pattern in ERROR_PATTERNS)
@@ -376,6 +387,8 @@ def summarize_key_messages(messages: list[str]) -> list[tuple[str, int]]:
     for message in messages:
         normalized = normalize_key_message(message)
         if not normalized.strip():
+            continue
+        if contains_ignored_captured_log(normalized):
             continue
         ordered_counts[normalized] = ordered_counts.get(normalized, 0) + 1
     return list(ordered_counts.items())
