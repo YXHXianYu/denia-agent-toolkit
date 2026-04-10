@@ -22,6 +22,7 @@
 - 如果点击 Play 后立即在 `Editor.log` 中发现错误，当前行为是不立刻中断，而是继续完成 Play 验证、10 秒观察和自动停 Play，再统一把错误作为结果上报。
 - 当前默认行为是在确认进入 Play 后继续观察 `Editor.log` 10 秒，并从这段时间内捕获到的新增日志里提取关键日志；当前关键日志定义为 `UnityEngine.StackTraceUtility:ExtractStackTrace ()` 前面的有效消息块，但最多只保留离该标记最近的 5 行，这个限制由脚本顶部的 `KEY_MESSAGE_LINE_LIMIT` 控制；保留 `Debug.Log` 自带的换行和空行，再按这 5 行内容首次出现的顺序聚合统计输出次数；观察结束后自动尝试关闭 Play。
 - 如果启用 `--renderdoc-capture`，当前默认行为是在进入 Play 后的观察窗口内，等待到停止 Play 前的预定时机再截帧。按钮直接在 Unity 窗口截图上用模板匹配定位；默认只打印“RenderDoc已截帧”，详细定位过程仅在 `--verbose` 下输出。
+- 当前默认行为是 best-effort 尝试定位 Unity 的显示窗口（优先 `UnityEditor.GameView`，其次 Scene 视图），如果找到就保存截图到 `logs/unity-auto-play/`，并在终端打印截图绝对路径；找不到时跳过，不影响主流程。当前默认截图时机固定为进入 Play 后 7 秒，与 RenderDoc 截帧解耦。
 - 当前默认行为是在成功关闭 Play 后，脚本会继续尝试最小化 Unity 窗口，并在终端提示“脚本执行完毕，请回到 IDE”；最小化属于收尾动作，失败时只记录提示，不覆盖主流程结果。
 - 调试截图默认输出到 `logs/unity-auto-play/`，不再需要 `--debug` 开关。
 - “等待编译完成”当前不是通过 Unity 内部 API 判断，而是通过以下外部信号组合判断：

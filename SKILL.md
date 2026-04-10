@@ -78,9 +78,10 @@ For the current Unity automation, the expected high-level behavior is:
 6. Extract key log blocks from the lines before `UnityEngine.StackTraceUtility:ExtractStackTrace ()`.
 7. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
 8. Automatically stop Play after the observation window.
-9. Minimize the Unity window after Play exits so the user can return to the IDE.
+9. Best-effort capture a Scene/Game display-window screenshot if that pane can be found, and print the absolute saved path. The default timing is 7 seconds after entering Play, and it is independent from RenderDoc capture timing.
+10. Minimize the Unity window after Play exits so the user can return to the IDE.
 
-Today, the Play button uses template matching against `templates/play-button-idle.png` and `templates/play-button-active.png`; RenderDoc Capture uses template matching against `templates/renderdoc-capture-button.png` on the Unity window screenshot. Default output is concise state logging, and `-v`/`--verbose` enables detailed recognition logs.
+Today, the Play button uses template matching against `templates/play-button-idle.png` and `templates/play-button-active.png`; RenderDoc Capture uses template matching against `templates/renderdoc-capture-button.png` on the Unity window screenshot. The script also best-effort captures the Scene/Game display window when it can find a matching Unity pane title; the default screenshot timing is 7 seconds after entering Play and is independent from RenderDoc timing. Default output is concise state logging, and `-v`/`--verbose` enables detailed recognition logs.
 
 If `Editor.log` reports an error immediately after clicking Play, describe the real behavior accurately: the script does not abort at once. It still tries to finish Play verification, the 10-second observation window, and automatic stop-Play cleanup before reporting the error.
 

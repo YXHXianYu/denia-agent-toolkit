@@ -23,18 +23,22 @@ uv sync
 
 ### Unity Auto Play
 
-自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式，最小化Unity窗口
+功能包括：
+- 自动唤起窗口、等待编译、完成后最小化窗口
+- 进入与退出Play模式
+- 自动截图Scene/Game，并打印截图保存路径
+- 自动捕获日志
+- 自动点击RenderDoc截帧按钮
 
 ```powershell
 # 当前目录是 .claude/skills/denia-agent-toolkit
 uv run python scripts/unity-auto-play.py
-uv run python scripts/unity-auto-play.py --renderdoc-capture
-uv run python scripts/unity-auto-play.py --renderdoc-capture -v
 
 # 当前目录是宿主项目根目录
 uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture -v
+
+# 如果需要点击RenderDoc截帧按钮，可以添加 --renderdoc-capture
+# 如果要查看完整运行十日至，可以添加 -v / --verbose
 ```
 
 输出示例

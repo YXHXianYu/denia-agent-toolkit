@@ -27,6 +27,7 @@ pyautogui.PAUSE = 0.05
 # Keep only the last few lines nearest to StackTraceUtility to avoid swallowing unrelated Editor.log noise.
 KEY_MESSAGE_LINE_LIMIT = 5
 RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS = 2.0
+DISPLAY_SNAPSHOT_AFTER_PLAY_SECONDS = 7.0
 DEFAULT_ACTIVATION_TIMEOUT = 12.0
 DEFAULT_COMPILE_TIMEOUT = 300.0
 DEFAULT_POST_PLAY_LOG_WAIT_SECONDS = 10.0
@@ -45,6 +46,11 @@ TEMPLATE_MATCH_SCALES = (0.90, 0.95, 1.0, 1.05, 1.10)
 DEFAULT_PLAY_IDLE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-idle.png"
 DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-active.png"
 DEFAULT_RENDERDOC_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "renderdoc-capture-button.png"
+DISPLAY_WINDOW_TITLE_CANDIDATES = (
+    "UnityEditor.GameView",
+    "UnityEditor.SceneView",
+    "UnityEditor.SceneViewWindow",
+)
 VERBOSE_ENABLED = False
 
 
@@ -357,6 +363,7 @@ def log_strategy(config: Config) -> None:
         f"+按钮{config.required_play_stability}次"
     )
     verbose_log("策略 验证=点Play后检测Play激活态模板")
+    verbose_log(f"策略 截图=Play后{DISPLAY_SNAPSHOT_AFTER_PLAY_SECONDS:.1f}s截Scene/Game")
     verbose_log(
         "策略 日志="
         f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
@@ -430,6 +437,23 @@ def save_debug_image(config: Config, image: Image.Image, stem: str) -> Path:
     path = config.debug_dir / f"{timestamp}-{safe_stem}.png"
     image.save(path)
     return path
+
+
+def capture_display_window_snapshot(config: Config) -> Path | None:
+    try:
+        display_window = find_unity_display_window()
+        if display_window is None:
+            verbose_log("未找到 Scene/Game 显示窗口，跳过截图")
+            return None
+
+        snapshot = grab_box(display_window.box)
+        saved_path = save_debug_image(config, snapshot, f"scene-game-{display_window.title}")
+        resolved_path = saved_path.resolve()
+        log(f"Scene/Game截图: {resolved_path}")
+        return resolved_path
+    except Exception as exc:
+        verbose_log(f"Scene/Game截图失败: {exc}")
+        return None
 
 
 def sleep_until(deadline: float) -> None:
@@ -554,6 +578,41 @@ def format_window_description(info: WindowInfo) -> str:
 
 def list_visible_windows() -> list[str]:
     return [format_window_description(info) for info in iter_window_info() if info.title]
+
+
+def has_usable_capture_box(box: Box) -> bool:
+    return (
+        box.width >= 64
+        and box.height >= 64
+        and box.left > -30000
+        and box.top > -30000
+        and box.right > -30000
+        and box.bottom > -30000
+    )
+
+
+def find_unity_display_window() -> WindowInfo | None:
+    best_window: WindowInfo | None = None
+    best_rank = len(DISPLAY_WINDOW_TITLE_CANDIDATES)
+    best_area = -1
+
+    for info in iter_window_info():
+        rank: int | None = None
+        for index, title_prefix in enumerate(DISPLAY_WINDOW_TITLE_CANDIDATES):
+            if info.title == title_prefix or info.title.startswith(title_prefix):
+                rank = index
+                break
+
+        if rank is None or not has_usable_capture_box(info.box):
+            continue
+
+        area = info.box.width * info.box.height
+        if best_window is None or rank < best_rank or (rank == best_rank and area > best_area):
+            best_window = info
+            best_rank = rank
+            best_area = area
+
+    return best_window
 
 
 def get_window_by_handle(handle: int | None) -> Any | None:
@@ -1305,6 +1364,8 @@ def wait_and_print_post_play_logs(
         verbose_log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
         start_time = time.monotonic()
         deadline = start_time + wait_seconds
+        display_snapshot_wait_seconds = min(wait_seconds, DISPLAY_SNAPSHOT_AFTER_PLAY_SECONDS)
+        display_snapshot_taken = False
 
         if config.renderdoc_capture:
             renderdoc_wait_seconds = renderdoc_capture_wait_seconds(wait_seconds)
@@ -1326,6 +1387,11 @@ def wait_and_print_post_play_logs(
             )
             renderdoc_prepare_thread.start()
 
+            if display_snapshot_wait_seconds <= renderdoc_wait_seconds:
+                sleep_until(start_time + display_snapshot_wait_seconds)
+                capture_display_window_snapshot(config)
+                display_snapshot_taken = True
+
             sleep_until(start_time + renderdoc_wait_seconds)
             if renderdoc_prepare_thread.is_alive():
                 verbose_log("RenderDoc预定位尚未完成, 到时回退实时定位")
@@ -1343,10 +1409,20 @@ def wait_and_print_post_play_logs(
                     verbose_log("RenderDoc到时, Unity不在前台, 回退到实时定位")
                 click_renderdoc_capture_button(window, config)
 
+            if not display_snapshot_taken:
+                sleep_until(start_time + display_snapshot_wait_seconds)
+                capture_display_window_snapshot(config)
+        else:
+            sleep_until(start_time + display_snapshot_wait_seconds)
+            capture_display_window_snapshot(config)
+
         sleep_until(deadline)
     elif config.renderdoc_capture:
         verbose_log("Play已进入, 观察日志0s")
+        capture_display_window_snapshot(config)
         click_renderdoc_capture_button(window, config)
+    else:
+        capture_display_window_snapshot(config)
 
     captured_lines = log_monitor.captured_lines_since(capture_marker)
     key_messages = log_monitor.key_messages_since(capture_marker)
@@ -1369,7 +1445,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "进入 Play 后，在观察窗口中点按 RenderDoc Capture 按钮。"
-            "触发时机为停止 Play 前 1 秒；按当前默认 10 秒观察期即第 9 秒。"
+            f"触发时机为停止 Play 前 {RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS:g} 秒；"
+            f"按当前默认 {DEFAULT_POST_PLAY_LOG_WAIT_SECONDS:g} 秒观察期即第 "
+            f"{DEFAULT_POST_PLAY_LOG_WAIT_SECONDS - RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS:g} 秒。"
         ),
     )
     parser.add_argument(
