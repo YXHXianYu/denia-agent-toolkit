@@ -49,10 +49,13 @@ mcp = FastMCP(
 def build_unity_auto_play_command(
     *,
     renderdoc_capture: bool,
+    verbose: bool,
     debug_dir: str,
 ) -> list[str]:
     command = [sys.executable, str(UNITY_AUTO_PLAY_SCRIPT)]
 
+    if verbose:
+        command.append("--verbose")
     if renderdoc_capture:
         command.append("--renderdoc-capture")
     command.extend(["--debug-dir", debug_dir])
@@ -140,11 +143,13 @@ async def unity_auto_play_help(ctx: Context[ServerSession, None]) -> CommandResu
 async def unity_auto_play_run(
     ctx: Context[ServerSession, None],
     renderdoc_capture: bool = False,
+    verbose: bool = False,
     debug_dir: str = "logs/unity-auto-play",
 ) -> CommandResult:
     """Run the external Unity auto-play workflow that activates Unity, enters Play, optionally triggers a template-matched RenderDoc capture 1 second before Play stops, captures logs, and exits Play."""
     command = build_unity_auto_play_command(
         renderdoc_capture=renderdoc_capture,
+        verbose=verbose,
         debug_dir=debug_dir,
     )
     return await run_command(command, ctx=ctx)

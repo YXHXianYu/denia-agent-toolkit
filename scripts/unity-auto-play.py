@@ -45,6 +45,7 @@ TEMPLATE_MATCH_SCALES = (0.90, 0.95, 1.0, 1.05, 1.10)
 DEFAULT_PLAY_IDLE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-idle.png"
 DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-active.png"
 DEFAULT_RENDERDOC_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "renderdoc-capture-button.png"
+VERBOSE_ENABLED = False
 
 
 ERROR_PATTERNS = (
@@ -333,27 +334,38 @@ class EditorLogMonitor(threading.Thread):
         return matches_error_line(line)
 
 
-def log(message: str) -> None:
+def set_verbose_enabled(enabled: bool) -> None:
+    global VERBOSE_ENABLED
+    VERBOSE_ENABLED = enabled
+
+
+def log(message: str, *, verbose_only: bool = False) -> None:
+    if verbose_only and not VERBOSE_ENABLED:
+        return
     print(f"[UnityAutoPlay] {message}", flush=True)
 
 
+def verbose_log(message: str) -> None:
+    log(message, verbose_only=True)
+
+
 def log_strategy(config: Config) -> None:
-    log("策略 激活=评分选窗+多策略+任务栏兜底")
-    log(
+    verbose_log("策略 激活=评分选窗+多策略+任务栏兜底")
+    verbose_log(
         "策略 空闲="
         f"log静默{config.log_quiet_seconds:.1f}s+状态{config.required_status_stability}次"
         f"+按钮{config.required_play_stability}次"
     )
-    log("策略 验证=点Play后检测Play激活态模板")
-    log(
+    verbose_log("策略 验证=点Play后检测Play激活态模板")
+    verbose_log(
         "策略 日志="
         f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
         f"前{KEY_MESSAGE_LINE_LIMIT}行去重+自动停Play"
     )
     if config.renderdoc_capture:
         renderdoc_wait = renderdoc_capture_wait_seconds(config.post_play_log_wait_seconds)
-        log(f"策略 截帧=Play后{renderdoc_wait:.1f}s点RenderDoc+模板匹配")
-    log("策略 收尾=停Play后最小化Unity并回到IDE")
+        verbose_log(f"策略 截帧=Play后{renderdoc_wait:.1f}s点RenderDoc+模板匹配")
+    verbose_log("策略 收尾=停Play后最小化Unity并回到IDE")
 
 
 def normalize_key_message(message: str) -> str:
@@ -399,11 +411,14 @@ def print_captured_logs(summary: list[tuple[str, int]], wait_seconds: float) -> 
         log(f"Play后{wait_seconds:.0f}s无新增日志")
         return
 
+    if VERBOSE_ENABLED:
+        verbose_log(
+            f"Play后关键日志 {wait_seconds:.0f}s。"
+            f"因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含{KEY_MESSAGE_LINE_LIMIT}行。如果你发现日志被截断，请调整参数"
+        )
+    else:
+        log(f"Play后关键日志 {wait_seconds:.0f}s")
 
-    log(
-        f"Play后关键日志 {wait_seconds:.0f}s。"
-        f"因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含{KEY_MESSAGE_LINE_LIMIT}行。如果你发现日志被截断，请调整参数"
-    )
     for index, (message, count) in enumerate(summary, start=1):
         print(f"[UnityAutoPlay][日志 {index}][x{count}]\n{message}\n", flush=True)
 
@@ -701,7 +716,7 @@ def try_activate_window_via_taskbar(window: Any, config: Config) -> bool:
     except Exception:
         button_text = "Unity"
 
-    log(f"尝试任务栏激活: {button_text}")
+    verbose_log(f"尝试任务栏激活: {button_text}")
 
     try:
         button.click_input()
@@ -753,10 +768,6 @@ ACTIVATION_STRATEGIES: tuple[tuple[str, Callable[[Any], None]], ...] = (
 )
 
 
-def debug_log(message: str) -> None:
-    log(message)
-
-
 def find_unity_window() -> Any:
     best_window: Any | None = None
     best_score = -1.0
@@ -781,7 +792,7 @@ def find_unity_window() -> Any:
 
 def activate_window(window: Any, config: Config) -> Box:
     title = str(window.title).strip()
-    log(f"激活Unity: {title}")
+    verbose_log(f"激活Unity: {title}")
 
     try:
         if bool(window.isMinimized):
@@ -798,7 +809,7 @@ def activate_window(window: Any, config: Config) -> Box:
         try:
             box = window_box(window)
             if is_window_active(window):
-                debug_log("Unity已激活")
+                log("Unity已激活")
                 return box
         except Exception:
             break
@@ -806,7 +817,7 @@ def activate_window(window: Any, config: Config) -> Box:
         if strategy_index < len(ACTIVATION_STRATEGIES):
             strategy_name, strategy_action = ACTIVATION_STRATEGIES[strategy_index]
             strategy_index += 1
-            debug_log(f"激活策略: {strategy_name}")
+            verbose_log(f"激活策略: {strategy_name}")
             try:
                 strategy_action(window)
             except Exception:
@@ -814,13 +825,13 @@ def activate_window(window: Any, config: Config) -> Box:
         elif not taskbar_attempted and try_activate_window_via_taskbar(window, config):
             taskbar_attempted = True
             try:
-                debug_log("任务栏激活成功")
+                verbose_log("任务栏激活成功")
                 return window_box(window)
             except Exception:
                 break
         else:
             taskbar_attempted = True
-            debug_log("重试activate")
+            verbose_log("重试activate")
             try:
                 window.activate(wait=True, user=True)
             except Exception:
@@ -1071,26 +1082,10 @@ def prepare_renderdoc_capture_target(window: Any, config: Config) -> RenderDocCa
     )
 
 
-def click_renderdoc_capture_target(
-    capture_target: RenderDocCaptureTarget,
-    *,
-    observation_started_at: float,
-    scheduled_elapsed_seconds: float,
-) -> None:
-    start_elapsed = time.monotonic() - observation_started_at
-    log(
-        "RenderDoc到时, 开始截帧: "
-        f"计划{scheduled_elapsed_seconds:.2f}s 实际开始{start_elapsed:.2f}s"
-    )
-
+def click_renderdoc_capture_target(capture_target: RenderDocCaptureTarget) -> None:
     pyautogui.click(capture_target.candidate.center_x, capture_target.candidate.center_y)
 
-    click_elapsed = time.monotonic() - observation_started_at
-    log(
-        "RenderDoc已截帧: "
-        f"({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
-        f"{capture_target.candidate.source} 实际点击{click_elapsed:.2f}s"
-    )
+    log("RenderDoc已截帧")
 
     mouse_park_x, mouse_park_y = parking_point(capture_target.window_box, capture_target.toolbar_box)
     time.sleep(0.08)
@@ -1137,11 +1132,11 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
 
         if status_state.red_samples == config.status_red_samples:
             saved_path = save_debug_image(config, status_image, "status-corner-warning")
-            log(f"已保存状态截图: {saved_path}")
+            verbose_log(f"已保存状态截图: {saved_path}")
 
         log_quiet = log_monitor.seconds_since_activity() >= config.log_quiet_seconds
         if status_state.red_samples >= config.status_red_samples and not red_indicator_reported:
-            log("状态角异常, 仍以Editor.log为准")
+            verbose_log("状态角异常, 仍以Editor.log为准")
             red_indicator_reported = True
 
         if (
@@ -1150,12 +1145,12 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
             and status_state.stable_samples >= config.required_status_stability
             and log_quiet
         ):
-            log("已空闲: log静默+状态稳定+按钮稳定")
+            verbose_log("已空闲: log静默+状态稳定+按钮稳定")
             return candidate
 
         if time.monotonic() - last_report >= 2.5:
             score_text = f"{candidate.score:.1f}" if candidate is not None else "无"
-            log(
+            verbose_log(
                 "等待空闲: "
                 f"分={score_text} "
                 f"按钮={stable_candidate_count}/{config.required_play_stability} "
@@ -1183,7 +1178,7 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
     before_image = grab_box(toolbar_box)
     verify_log_marker = log_monitor.capture_marker()
     pyautogui.click(candidate.center_x, candidate.center_y)
-    log(f"已点Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
+    verbose_log(f"已点Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
 
     time.sleep(0.08)
     pyautogui.moveTo(mouse_park_x, mouse_park_y)
@@ -1219,19 +1214,11 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
 def click_renderdoc_capture_button(
     window: Any,
     config: Config,
-    *,
-    observation_started_at: float,
-    scheduled_elapsed_seconds: float,
 ) -> None:
     if not is_window_active(window):
         activate_window(window, config)
     capture_target = prepare_renderdoc_capture_target(window, config)
-
-    click_renderdoc_capture_target(
-        capture_target,
-        observation_started_at=observation_started_at,
-        scheduled_elapsed_seconds=scheduled_elapsed_seconds,
-    )
+    click_renderdoc_capture_target(capture_target)
 
 
 def resolve_current_play_candidate(window: Any, config: Config) -> PlayCandidate:
@@ -1260,7 +1247,7 @@ def stop_play_button(window: Any, config: Config) -> None:
 
     before_image = grab_box(toolbar_box)
     pyautogui.click(candidate.center_x, candidate.center_y)
-    log(f"10s到, 停Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
+    verbose_log(f"10s到, 停Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
 
     time.sleep(0.08)
     pyautogui.moveTo(mouse_park_x, mouse_park_y)
@@ -1301,7 +1288,7 @@ def minimize_window(window: Any, config: Config) -> None:
             window.minimize(wait=True)
         except Exception as exc:
             log(f"停Play后最小化失败: {title}")
-            debug_log(f"最小化异常: {exc}")
+            verbose_log(f"最小化异常: {exc}")
             return
 
     log("脚本执行完毕, 已最小化Unity, 请回到IDE")
@@ -1315,13 +1302,13 @@ def wait_and_print_post_play_logs(
 ) -> bool:
     wait_seconds = max(0.0, config.post_play_log_wait_seconds)
     if wait_seconds > 0.0:
-        log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
+        verbose_log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
         start_time = time.monotonic()
         deadline = start_time + wait_seconds
 
         if config.renderdoc_capture:
             renderdoc_wait_seconds = renderdoc_capture_wait_seconds(wait_seconds)
-            log(f"RenderDoc将在{renderdoc_wait_seconds:.1f}s时截帧")
+            # log(f"RenderDoc将在{renderdoc_wait_seconds:.1f}s时截帧")
             prepared_renderdoc_target: RenderDocCaptureTarget | None = None
             renderdoc_prepare_error: UnityAutomationError | None = None
 
@@ -1341,41 +1328,25 @@ def wait_and_print_post_play_logs(
 
             sleep_until(start_time + renderdoc_wait_seconds)
             if renderdoc_prepare_thread.is_alive():
-                log("RenderDoc预定位尚未完成, 到时回退实时定位")
+                verbose_log("RenderDoc预定位尚未完成, 到时回退实时定位")
             elif renderdoc_prepare_error is not None:
-                log(f"RenderDoc预定位失败, 到时回退实时定位: {renderdoc_prepare_error}")
+                verbose_log(f"RenderDoc预定位失败, 到时回退实时定位: {renderdoc_prepare_error}")
 
             if (
                 not renderdoc_prepare_thread.is_alive()
                 and prepared_renderdoc_target is not None
                 and is_window_active(window)
             ):
-                click_renderdoc_capture_target(
-                    prepared_renderdoc_target,
-                    observation_started_at=start_time,
-                    scheduled_elapsed_seconds=renderdoc_wait_seconds,
-                )
+                click_renderdoc_capture_target(prepared_renderdoc_target)
             else:
                 if prepared_renderdoc_target is not None:
-                    log("RenderDoc到时, Unity不在前台, 回退到实时定位")
-                click_renderdoc_capture_button(
-                    window,
-                    config,
-                    observation_started_at=start_time,
-                    scheduled_elapsed_seconds=renderdoc_wait_seconds,
-                )
+                    verbose_log("RenderDoc到时, Unity不在前台, 回退到实时定位")
+                click_renderdoc_capture_button(window, config)
 
         sleep_until(deadline)
     elif config.renderdoc_capture:
-        start_time = time.monotonic()
-        log("Play已进入, 观察日志0s")
-        log("RenderDoc将在0.0s时截帧")
-        click_renderdoc_capture_button(
-            window,
-            config,
-            observation_started_at=start_time,
-            scheduled_elapsed_seconds=0.0,
-        )
+        verbose_log("Play已进入, 观察日志0s")
+        click_renderdoc_capture_button(window, config)
 
     captured_lines = log_monitor.captured_lines_since(capture_marker)
     key_messages = log_monitor.key_messages_since(capture_marker)
@@ -1386,6 +1357,12 @@ def wait_and_print_post_play_logs(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="激活 Unity Editor，等待空闲，然后自动点击 Play。",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="输出策略、识别和定位相关的详细日志。默认只输出关键状态日志。",
     )
     parser.add_argument(
         "--renderdoc-capture",
@@ -1413,6 +1390,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    set_verbose_enabled(bool(args.verbose))
     config = config_from_args(args)
     log_monitor: EditorLogMonitor | None = None
     unity_window: Any | None = None
@@ -1421,7 +1399,7 @@ def main(argv: list[str] | None = None) -> int:
         log_strategy(config)
         editor_log_path = resolve_editor_log_path()
         wait_for_path(editor_log_path, timeout=5.0)
-        log(f"监控日志: {editor_log_path}")
+        verbose_log(f"监控日志: {editor_log_path}")
 
         log_monitor = EditorLogMonitor(editor_log_path)
         log_monitor.start()

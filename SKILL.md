@@ -74,13 +74,13 @@ For the current Unity automation, the expected high-level behavior is:
 2. Wait until Unity looks idle enough to click Play.
 3. Click Play and verify that Play actually entered.
 4. Observe `Editor.log` for 10 seconds after entering Play.
-5. If `--renderdoc-capture` is enabled, template-match the RenderDoc Capture button 1 second before Play stops; with the current 10-second observation window, that means at 9 seconds.
+5. If `--renderdoc-capture` is enabled, template-match the RenderDoc Capture button shortly before Play stops.
 6. Extract key log blocks from the lines before `UnityEngine.StackTraceUtility:ExtractStackTrace ()`.
 7. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
 8. Automatically stop Play after the observation window.
 9. Minimize the Unity window after Play exits so the user can return to the IDE.
 
-Today, the Play button uses template matching against `templates/play-button-idle.png` and `templates/play-button-active.png`; RenderDoc Capture uses template matching against `templates/renderdoc-capture-button.png` on the Unity window screenshot, triggers 1 second before Play stops, and logs planned versus actual capture timing.
+Today, the Play button uses template matching against `templates/play-button-idle.png` and `templates/play-button-active.png`; RenderDoc Capture uses template matching against `templates/renderdoc-capture-button.png` on the Unity window screenshot. Default output is concise state logging, and `-v`/`--verbose` enables detailed recognition logs.
 
 If `Editor.log` reports an error immediately after clicking Play, describe the real behavior accurately: the script does not abort at once. It still tries to finish Play verification, the 10-second observation window, and automatic stop-Play cleanup before reporting the error.
 
@@ -102,10 +102,12 @@ Preferred commands:
 # 当前目录是 denia-agent-toolkit 仓库根目录
 uv run python scripts/unity-auto-play.py --help
 uv run python scripts/unity-auto-play.py
+uv run python scripts/unity-auto-play.py --renderdoc-capture -v
 
 # 当前目录是宿主项目根目录，toolkit 安装在 .claude/skills/denia-agent-toolkit
 uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --help
 uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture -v
 ```
 
 If the user asks about MCP routing or tool registration, explain that [server.py](server.py) is implemented as a minimal wrapper server today, and that broader MCP tool coverage is still pending.
