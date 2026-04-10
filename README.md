@@ -23,7 +23,7 @@ uv sync
 
 ### Unity Auto Play
 
-自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式。
+自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式，最小化Unity窗口
 
 ```powershell
 # 当前目录是 .claude/skills/denia-agent-toolkit
@@ -40,6 +40,7 @@ uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --de
 [UnityAutoPlay] 策略 空闲=log静默1.0s+状态5次+按钮3次
 [UnityAutoPlay] 策略 验证=点Play后检测按钮变化/蓝高亮
 [UnityAutoPlay] 策略 日志=Play后观察10s+前5行去重+自动停Play
+[UnityAutoPlay] 策略 收尾=停Play后最小化Unity并回到IDE
 [UnityAutoPlay] 监控日志: C:\Users\xianhao.yu\AppData\Local\Unity\Editor\Editor.log
 [UnityAutoPlay] 激活Unity: UnityFFTBloom - Environment_Free - Windows, Mac, Linux - Unity 2022.3.6f1 <DX12>
 [UnityAutoPlay] 激活策略: show_restore_activate
@@ -63,6 +64,7 @@ OnRenderImage() possibly didn't write anything to the destination texture!
 [UnityAutoPlay] Unity已激活
 [UnityAutoPlay] 10s到, 停Play: (931, 66) 启发式识别
 [UnityAutoPlay] 已停Play
+[UnityAutoPlay] 脚本执行完毕, 已最小化Unity, 请回到IDE
 ```
 
 ### MCP Server

@@ -110,7 +110,7 @@ def toolkit_capabilities() -> str:
         "# Denia Agent Toolkit\n\n"
         "## Implemented\n"
         "- Unity external automation via scripts/unity-auto-play.py\n"
-        "- Unity window activation, idle detection, Play enter/exit, and Editor.log observation\n"
+        "- Unity window activation, idle detection, Play enter/exit, Editor.log observation, and post-run window minimization\n"
         "- MCP wrapper tools for capability inspection and running the Unity workflow\n\n"
         "## Not Implemented Yet\n"
         "- UE automation\n"
@@ -131,6 +131,7 @@ def toolkit_status() -> ToolkitStatus:
             "Unity external auto-play workflow",
             "Editor.log key log capture and deduplication",
             "Automatic Play stop after the observation window",
+            "Automatic Unity window minimization after Play exits",
         ],
         pending_workflows=[
             "UE automation",

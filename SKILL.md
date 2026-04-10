@@ -75,6 +75,7 @@ For the current Unity automation, the expected high-level behavior is:
 5. Extract key log blocks from the lines before `UnityEngine.StackTraceUtility:ExtractStackTrace ()`.
 6. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
 7. Automatically stop Play after the observation window.
+8. Minimize the Unity window after Play exits so the user can return to the IDE.
 
 If `Editor.log` reports an error immediately after clicking Play, describe the real behavior accurately: the script does not abort at once. It still tries to finish Play verification, the 10-second observation window, and automatic stop-Play cleanup before reporting the error.
 

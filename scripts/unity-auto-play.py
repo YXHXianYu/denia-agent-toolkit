@@ -312,6 +312,7 @@ def log_strategy(config: Config) -> None:
         f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
         f"前{KEY_MESSAGE_LINE_LIMIT}行去重+自动停Play"
     )
+    log("策略 收尾=停Play后最小化Unity并回到IDE")
 
 
 def normalize_key_message(message: str) -> str:
@@ -1204,6 +1205,23 @@ def stop_play_button(window: Any, config: Config) -> None:
     raise UnityAutomationError("10s后已尝试停Play, 但未确认退出Play。")
 
 
+def minimize_window(window: Any, config: Config) -> None:
+    title = str(getattr(window, "title", "")).strip() or "Unity"
+
+    try:
+        window.minimize(wait=True)
+    except Exception:
+        try:
+            activate_window(window, config)
+            window.minimize(wait=True)
+        except Exception as exc:
+            log(f"停Play后最小化失败: {title}")
+            debug_log(config, f"最小化异常: {exc}")
+            return
+
+    log("脚本执行完毕, 已最小化Unity, 请回到IDE")
+
+
 def wait_and_print_post_play_logs(
     log_monitor: EditorLogMonitor,
     config: Config,
@@ -1312,6 +1330,7 @@ def main(argv: list[str] | None = None) -> int:
         log("已进入Play")
         has_post_play_error = wait_and_print_post_play_logs(log_monitor, config, play_log_marker)
         stop_play_button(unity_window, config)
+        minimize_window(unity_window, config)
         if has_post_play_error:
             raise UnityAutomationError("进入 Play 模式后的观察期内，Unity Editor.log 中出现了新的错误。")
         return 0
