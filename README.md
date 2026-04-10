@@ -21,7 +21,7 @@ uv sync
 
 ### 1. Unity Auto Play
 
-功能包括：
+功能：
 - 自动唤起窗口、等待编译、完成后最小化窗口
 - 进入与退出Play模式
 - 自动截图Scene/Game，并打印截图保存路径
@@ -39,21 +39,11 @@ uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
 # 如果要查看完整运行十日至，可以添加 -v / --verbose
 ```
 
-输出示例
+#### 使用例
 
-```
-[UnityAutoPlay] Unity已激活
-[UnityAutoPlay] Unity已激活
-[UnityAutoPlay] 已进入Play
-[UnityAutoPlay] Scene/Game截图: D:\Data\UnityFFTBloom\.claude\skills\denia-agent-toolkit\logs\unity-auto-play\20260410-173837-scene-game-UnityEditor.GameView.png
-[UnityAutoPlay] RenderDoc已截帧
-[UnityAutoPlay] Play后关键日志 10s。因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含5行。如果你发现日志被截断，请调整参数
-[UnityAutoPlay][日志 1][x1]
-OnRenderImage() possibly didn't write anything to the destination texture!
-[UnityAutoPlay] Unity已激活
-[UnityAutoPlay] 已停Play
-[UnityAutoPlay] 脚本执行完毕, 已最小化Unity, 请回到IDE
-```
+VSCode Copilot自动调取工具，捕获日志和Unity运行时截图
+
+![image-20260410175201591](README/image-20260410175201591.png)
 
 ## 开发
 
