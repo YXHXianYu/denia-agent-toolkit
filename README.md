@@ -12,7 +12,7 @@
 
 ```powershell
 # 在你的项目目录下，执行以下命令（可以直接添加到skill中，无需任何额外操作）
-git clone git@github.com:YXHXianYu/denia-agent-toolkit.git .claude/skills/
+git clone git@github.com:YXHXianYu/denia-agent-toolkit.git .claude/skills/denia-agent-toolkit
 
 cd .claude/skills/denia-agent-toolkit
 uv venv
