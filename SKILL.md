@@ -95,6 +95,8 @@ Do not describe this as a Unity internal API signal. It is an external heuristic
 
 Use the existing script as a black-box workflow when the request is already supported.
 
+When the toolkit is installed under `.claude/skills/denia-agent-toolkit` inside a host project, prefer switching into that directory first and then running `uv` commands there. Do not keep running `uv run` or `uv sync` from the host-project root unless the user explicitly wants that form.
+
 Preferred commands:
 
 ```powershell
@@ -104,10 +106,29 @@ uv run python scripts/unity-auto-play.py
 uv run python scripts/unity-auto-play.py --renderdoc-capture -v
 
 # 当前目录是宿主项目根目录，toolkit 安装在 .claude/skills/denia-agent-toolkit
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --help
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
-uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture -v
+cd .claude/skills/denia-agent-toolkit
+uv run python scripts/unity-auto-play.py --help
+uv run python scripts/unity-auto-play.py
+uv run python scripts/unity-auto-play.py --renderdoc-capture -v
 ```
+
+If `uv run` fails with a missing-module error such as `ModuleNotFoundError: No module named '...'`, treat that as an environment-sync problem first:
+
+```powershell
+cd .claude/skills/denia-agent-toolkit
+uv sync
+```
+
+Then retry the original `uv run ...` command.
+
+If there is no `.venv` yet, `uv run` will normally create it automatically instead of asking you to create it manually first. The terminal output typically includes lines like:
+
+```text
+Using CPython <version>
+Creating virtual environment at: .venv
+```
+
+If the project has dependencies, it may then continue with install progress output such as `Installing wheels...` before running the script.
 
 If the user asks about adding a new integration layer, explain that the repository currently keeps a single script-first surface and does not maintain an MCP wrapper anymore.
 
