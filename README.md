@@ -1,19 +1,17 @@
-# denia-agent-toolkit
+# Denia-Agent-Toolkit
+
+一个面向图形与引擎研发的本地 agent 工具集（Skill）
 
 > 达妮娅(Denia)可爱捏😋😋
 
-一个面向图形与引擎研发的本地 agent 工具集
-
-功能涵盖：Unity、UE、RenderDoc
-
-使用方式支持：直接运行python脚本、Skill、MCP
+![1](README/1.png)
 
 ## 环境
 
 默认使用 `uv` 管理项目环境与依赖。
 
 ```powershell
-# 进入你的项目目录
+# 在你的项目目录下，执行以下命令（可以直接添加到skill中，无需任何额外操作）
 git clone git@github.com:YXHXianYu/denia-agent-toolkit.git .claude/skills/
 
 cd .claude/skills/denia-agent-toolkit
@@ -21,7 +19,7 @@ uv venv
 uv sync
 ```
 
-### Unity Auto Play
+### 1. Unity Auto Play
 
 功能包括：
 - 自动唤起窗口、等待编译、完成后最小化窗口
