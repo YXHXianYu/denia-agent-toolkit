@@ -116,7 +116,7 @@ def toolkit_capabilities() -> str:
         "# Denia Agent Toolkit\n\n"
         "## Implemented\n"
         "- Unity external automation via scripts/unity-auto-play.py\n"
-        "- Unity window activation, idle detection, Play enter/exit, optional template-matched RenderDoc capture-button click, Editor.log observation, and post-run window minimization\n"
+        "- Unity window activation, idle detection, Play enter/exit, optional template-matched RenderDoc capture-button click 1 second before Play stops, Editor.log observation, and post-run window minimization\n"
         "- MCP wrapper tools for capability inspection and running the Unity workflow\n\n"
         "## Not Implemented Yet\n"
         "- UE automation\n"
@@ -135,7 +135,7 @@ def toolkit_status() -> ToolkitStatus:
         supported_platforms=["Windows"],
         implemented_workflows=[
             "Unity external auto-play workflow",
-            "Optional GameView RenderDoc capture button click via template matching during Unity auto-play",
+            "Optional template-matched RenderDoc capture button click 1 second before Play stops during Unity auto-play",
             "Editor.log key log capture and deduplication",
             "Automatic Play stop after the observation window",
             "Automatic Unity window minimization after Play exits",
@@ -167,7 +167,7 @@ async def unity_auto_play_run(
     renderdoc_template: str | None = None,
     debug_dir: str = "logs/unity-auto-play",
 ) -> CommandResult:
-    """Run the external Unity auto-play workflow that activates Unity, enters Play, optionally triggers a template-matched RenderDoc capture, captures logs, and exits Play."""
+    """Run the external Unity auto-play workflow that activates Unity, enters Play, optionally triggers a template-matched RenderDoc capture 1 second before Play stops, captures logs, and exits Play."""
     command = build_unity_auto_play_command(
         debug=debug,
         editor_log=editor_log,

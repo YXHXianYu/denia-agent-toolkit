@@ -26,7 +26,7 @@ pyautogui.PAUSE = 0.05
 
 # Keep only the last few lines nearest to StackTraceUtility to avoid swallowing unrelated Editor.log noise.
 KEY_MESSAGE_LINE_LIMIT = 5
-RENDERDOC_CAPTURE_MAX_WAIT_SECONDS = 5.0
+RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS = 1.0
 PLAY_TEMPLATE_MATCH_THRESHOLD = 0.78
 RENDERDOC_TEMPLATE_MATCH_THRESHOLD = 0.78
 TEMPLATE_MATCH_SCALES = (0.90, 0.95, 1.0, 1.05, 1.10)
@@ -125,6 +125,13 @@ class PlayCandidate:
     score: float
     sample_box: Box
     source: str
+
+
+@dataclass(frozen=True)
+class RenderDocCaptureTarget:
+    window_box: Box
+    toolbar_box: Box
+    candidate: PlayCandidate
 
 
 @dataclass
@@ -391,6 +398,14 @@ def save_debug_image(config: Config, image: Image.Image, stem: str) -> Path | No
     path = config.debug_dir / f"{timestamp}-{safe_stem}.png"
     image.save(path)
     return path
+
+
+def sleep_until(deadline: float) -> None:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return
+        time.sleep(remaining)
 
 
 def resolve_editor_log_path(override: Path | None) -> Path:
@@ -936,7 +951,7 @@ def update_status_corner_state(
 
 
 def renderdoc_capture_wait_seconds(total_wait_seconds: float) -> float:
-    return max(0.0, min(RENDERDOC_CAPTURE_MAX_WAIT_SECONDS, total_wait_seconds / 2.0))
+    return max(0.0, total_wait_seconds - RENDERDOC_CAPTURE_BEFORE_STOP_SECONDS)
 
 
 @lru_cache(maxsize=8)
@@ -1059,6 +1074,71 @@ def find_renderdoc_capture_candidate(
         threshold=RENDERDOC_TEMPLATE_MATCH_THRESHOLD,
         label="RenderDoc",
     )
+
+
+def prepare_renderdoc_capture_target(window: Any, config: Config) -> RenderDocCaptureTarget:
+    current_window_box = window_box(window)
+    toolbar_box = current_window_box
+    toolbar_image = grab_box(toolbar_box)
+    candidate = find_renderdoc_capture_candidate(
+        toolbar_image,
+        toolbar_box,
+        current_window_box,
+        config.renderdoc_template_path,
+    )
+    if candidate is None:
+        if config.debug:
+            save_debug_image(config, toolbar_image, "renderdoc-toolbar-miss")
+        raise UnityAutomationError(
+            "RenderDoc 模板匹配失败，没有在 Game 视图顶条中找到 Capture 按钮。"
+            f"模板: {config.renderdoc_template_path}。"
+            "请确认模板裁剪准确、Game 视图可见且已启用 RenderDoc 集成。"
+        )
+
+    if config.debug:
+        save_debug_image(config, toolbar_image, "renderdoc-toolbar-probe")
+
+    return RenderDocCaptureTarget(
+        window_box=current_window_box,
+        toolbar_box=toolbar_box,
+        candidate=candidate,
+    )
+
+
+def click_renderdoc_capture_target(
+    capture_target: RenderDocCaptureTarget,
+    *,
+    observation_started_at: float | None = None,
+    scheduled_elapsed_seconds: float | None = None,
+) -> None:
+    if observation_started_at is not None:
+        start_elapsed = time.monotonic() - observation_started_at
+        if scheduled_elapsed_seconds is None:
+            log(f"RenderDoc到时, 开始截帧: {start_elapsed:.2f}s")
+        else:
+            log(
+                "RenderDoc到时, 开始截帧: "
+                f"计划{scheduled_elapsed_seconds:.2f}s 实际开始{start_elapsed:.2f}s"
+            )
+
+    pyautogui.click(capture_target.candidate.center_x, capture_target.candidate.center_y)
+
+    if observation_started_at is None:
+        log(
+            f"RenderDoc截帧: ({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
+            f"{capture_target.candidate.source}"
+        )
+    else:
+        click_elapsed = time.monotonic() - observation_started_at
+        log(
+            "RenderDoc已截帧: "
+            f"({capture_target.candidate.center_x}, {capture_target.candidate.center_y}) "
+            f"{capture_target.candidate.source} 实际点击{click_elapsed:.2f}s"
+        )
+
+    mouse_park_x, mouse_park_y = parking_point(capture_target.window_box, capture_target.toolbar_box)
+    time.sleep(0.08)
+    pyautogui.moveTo(mouse_park_x, mouse_park_y)
 
 
 def parking_point(window_box_value: Box, avoid_box: Box) -> tuple[int, int]:
@@ -1184,40 +1264,24 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
     raise UnityAutomationError("已点击 Play，但无法确认 Unity 真的进入了播放模式。")
 
 
-def click_renderdoc_capture_button(window: Any, config: Config) -> None:
-    activate_window(window, config)
-    current_window_box = window_box(window)
-    game_view_box = get_unity_pane_box(window, "UnityEditor.GameView")
-    if game_view_box is None:
-        raise UnityAutomationError("无法定位 UnityEditor.GameView，无法触发 RenderDoc 截帧。")
+def click_renderdoc_capture_button(
+    window: Any,
+    config: Config,
+    *,
+    observation_started_at: float | None = None,
+    scheduled_elapsed_seconds: float | None = None,
+    capture_target: RenderDocCaptureTarget | None = None,
+) -> None:
+    if capture_target is None:
+        if not is_window_active(window):
+            activate_window(window, config)
+        capture_target = prepare_renderdoc_capture_target(window, config)
 
-    toolbar_box = build_game_view_toolbar_box(game_view_box)
-    toolbar_image = grab_box(toolbar_box)
-    candidate = find_renderdoc_capture_candidate(
-        toolbar_image,
-        toolbar_box,
-        current_window_box,
-        config.renderdoc_template_path,
+    click_renderdoc_capture_target(
+        capture_target,
+        observation_started_at=observation_started_at,
+        scheduled_elapsed_seconds=scheduled_elapsed_seconds,
     )
-    if candidate is None:
-        if config.debug:
-            save_debug_image(config, toolbar_image, "renderdoc-toolbar-miss")
-        raise UnityAutomationError(
-            "RenderDoc 模板匹配失败，没有在 Game 视图顶条中找到 Capture 按钮。"
-            f"模板: {config.renderdoc_template_path}。"
-            "请确认模板裁剪准确、Game 视图可见且已启用 RenderDoc 集成。"
-        )
-
-    mouse_park_x, mouse_park_y = parking_point(current_window_box, toolbar_box)
-    if config.debug:
-        save_debug_image(config, toolbar_image, "renderdoc-toolbar-probe")
-
-    pyautogui.moveTo(mouse_park_x, mouse_park_y)
-    time.sleep(config.poll_interval)
-    pyautogui.click(candidate.center_x, candidate.center_y)
-    log(f"RenderDoc截帧: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
-    time.sleep(0.08)
-    pyautogui.moveTo(mouse_park_x, mouse_park_y)
 
 
 def resolve_current_play_candidate(window: Any, config: Config) -> PlayCandidate:
@@ -1302,25 +1366,70 @@ def wait_and_print_post_play_logs(
     capture_marker: int,
 ) -> bool:
     wait_seconds = max(0.0, config.post_play_log_wait_seconds)
-    renderdoc_wait_seconds = renderdoc_capture_wait_seconds(wait_seconds)
-    renderdoc_capture_completed = not config.renderdoc_capture
     if wait_seconds > 0.0:
         log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
-        if config.renderdoc_capture:
-            log(f"RenderDoc将在{renderdoc_wait_seconds:.1f}s时截帧")
         start_time = time.monotonic()
-        deadline = time.monotonic() + wait_seconds
-        while time.monotonic() < deadline:
-            if config.renderdoc_capture and not renderdoc_capture_completed:
-                elapsed = time.monotonic() - start_time
-                if elapsed >= renderdoc_wait_seconds:
-                    click_renderdoc_capture_button(window, config)
-                    renderdoc_capture_completed = True
-                    continue
-            time.sleep(min(config.poll_interval, max(0.05, deadline - time.monotonic())))
+        deadline = start_time + wait_seconds
 
-    if config.renderdoc_capture and not renderdoc_capture_completed:
-        click_renderdoc_capture_button(window, config)
+        if config.renderdoc_capture:
+            renderdoc_wait_seconds = renderdoc_capture_wait_seconds(wait_seconds)
+            log(f"RenderDoc将在{renderdoc_wait_seconds:.1f}s时截帧")
+            prepared_renderdoc_target: RenderDocCaptureTarget | None = None
+            renderdoc_prepare_error: UnityAutomationError | None = None
+
+            def prepare_renderdoc_target_worker() -> None:
+                nonlocal prepared_renderdoc_target, renderdoc_prepare_error
+                try:
+                    prepared_renderdoc_target = prepare_renderdoc_capture_target(window, config)
+                except UnityAutomationError as exc:
+                    renderdoc_prepare_error = exc
+
+            renderdoc_prepare_thread = threading.Thread(
+                target=prepare_renderdoc_target_worker,
+                name="renderdoc-prepare",
+                daemon=True,
+            )
+            renderdoc_prepare_thread.start()
+
+            sleep_until(start_time + renderdoc_wait_seconds)
+            if renderdoc_prepare_thread.is_alive():
+                log("RenderDoc预定位尚未完成, 到时回退实时定位")
+            elif renderdoc_prepare_error is not None:
+                log(f"RenderDoc预定位失败, 到时回退实时定位: {renderdoc_prepare_error}")
+
+            if (
+                not renderdoc_prepare_thread.is_alive()
+                and prepared_renderdoc_target is not None
+                and is_window_active(window)
+            ):
+                click_renderdoc_capture_button(
+                    window,
+                    config,
+                    observation_started_at=start_time,
+                    scheduled_elapsed_seconds=renderdoc_wait_seconds,
+                    capture_target=prepared_renderdoc_target,
+                )
+            else:
+                if prepared_renderdoc_target is not None:
+                    log("RenderDoc到时, Unity不在前台, 回退到实时定位")
+                click_renderdoc_capture_button(
+                    window,
+                    config,
+                    observation_started_at=start_time,
+                    scheduled_elapsed_seconds=renderdoc_wait_seconds,
+                )
+
+        sleep_until(deadline)
+    elif config.renderdoc_capture:
+        start_time = time.monotonic()
+        log("Play已进入, 观察日志0s")
+        log("RenderDoc将在0.0s时截帧")
+        click_renderdoc_capture_button(
+            window,
+            config,
+            observation_started_at=start_time,
+            scheduled_elapsed_seconds=0.0,
+        )
 
     captured_lines = log_monitor.captured_lines_since(capture_marker)
     key_messages = log_monitor.key_messages_since(capture_marker)
@@ -1366,8 +1475,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--renderdoc-capture",
         action="store_true",
         help=(
-            "进入 Play 后，在观察窗口中点按 Game 视图的 RenderDoc Capture 按钮。"
-            "触发时机为 min(5s, 观察时长 / 2)。"
+            "进入 Play 后，在观察窗口中点按 RenderDoc Capture 按钮。"
+            "触发时机为停止 Play 前 1 秒；按当前默认 10 秒观察期即第 9 秒。"
         ),
     )
     parser.add_argument(

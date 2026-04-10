@@ -21,7 +21,7 @@
 - 错误监控以 Unity `Editor.log` 为主信号，右下角状态区监控为补充信号。
 - 如果点击 Play 后立即在 `Editor.log` 中发现错误，当前行为是不立刻中断，而是继续完成 Play 验证、10 秒观察和自动停 Play，再统一把错误作为结果上报。
 - 当前默认行为是在确认进入 Play 后继续观察 `Editor.log` 10 秒，并从这段时间内捕获到的新增日志里提取关键日志；当前关键日志定义为 `UnityEngine.StackTraceUtility:ExtractStackTrace ()` 前面的有效消息块，但最多只保留离该标记最近的 5 行，这个限制由脚本顶部的 `KEY_MESSAGE_LINE_LIMIT` 控制；保留 `Debug.Log` 自带的换行和空行，再按这 5 行内容首次出现的顺序聚合统计输出次数；观察结束后自动尝试关闭 Play。
-- 如果启用 `--renderdoc-capture`，当前默认行为是在进入 Play 后的观察窗口内，等待 `min(5s, 观察时长 / 2)`，然后在 Game 视图顶条里用模板匹配定位 RenderDoc Capture 按钮截一帧。
+- 如果启用 `--renderdoc-capture`，当前默认行为是在进入 Play 后的观察窗口内，等待到停止 Play 前 1 秒再截帧；按当前默认 10 秒观察期即第 9 秒。按钮直接在 Unity 窗口截图上用模板匹配定位，同时在终端打印计划触发时间、实际开始时间和实际点击时间。
 - 当前默认行为是在成功关闭 Play 后，脚本会继续尝试最小化 Unity 窗口，并在终端提示“脚本执行完毕，请回到 IDE”；最小化属于收尾动作，失败时只记录提示，不覆盖主流程结果。
 - `--debug` 调试截图默认输出到 `logs/unity-auto-play/`。
 - “等待编译完成”当前不是通过 Unity 内部 API 判断，而是通过以下外部信号组合判断：
@@ -49,7 +49,7 @@
 - 输入和点击当前使用 `PyAutoGUI`。
 - 截图当前使用 `Pillow`；模板匹配当前使用 `OpenCV + NumPy`。
 - Play 按钮当前使用顶部工具栏区域配合仓库根目录 `templates/play-button-idle.png` 和 `templates/play-button-active.png` 做模板匹配，不保留启发式兜底。
-- RenderDoc Capture 按钮当前优先使用 UI Automation 获取 `UnityEditor.GameView` 的边界框，把搜索范围限制到 Game 视图顶条；按钮检测本身只使用模板匹配，不保留启发式兜底，也不要先退化成固定坐标。
+- RenderDoc Capture 按钮当前直接在 Unity 窗口截图上做模板匹配；不保留 UIA 边界框依赖，不保留启发式兜底，也不要先退化成固定坐标。
 
 ## 当前支持矩阵
 
