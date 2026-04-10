@@ -13,9 +13,10 @@
 默认使用 `uv` 管理项目环境与依赖。
 
 ```powershell
-git clone git@github.com:YXHXianYu/denia-agent-toolkit.git
-cd denia-agent-toolkit
+# 进入你的项目目录
+git clone git@github.com:YXHXianYu/denia-agent-toolkit.git .claude/skills/
 
+cd .claude/skills/denia-agent-toolkit
 uv venv
 uv sync
 ```
@@ -25,7 +26,7 @@ uv sync
 自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端，并自动关闭Play模式。
 
 ```powershell
-uv run python scripts/unity-auto-play.py --debug
+uv run python .claude/skills/scripts/unity-auto-play.py --debug
 ```
 
 输出示例
