@@ -45,6 +45,7 @@ uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py
 [UnityAutoPlay] Unity已激活
 [UnityAutoPlay] Unity已激活
 [UnityAutoPlay] 已进入Play
+[UnityAutoPlay] Scene/Game截图: D:\Data\UnityFFTBloom\.claude\skills\denia-agent-toolkit\logs\unity-auto-play\20260410-173837-scene-game-UnityEditor.GameView.png
 [UnityAutoPlay] RenderDoc已截帧
 [UnityAutoPlay] Play后关键日志 10s。因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含5行。如果你发现日志被截断，请调整参数
 [UnityAutoPlay][日志 1][x1]
@@ -52,20 +53,6 @@ OnRenderImage() possibly didn't write anything to the destination texture!
 [UnityAutoPlay] Unity已激活
 [UnityAutoPlay] 已停Play
 [UnityAutoPlay] 脚本执行完毕, 已最小化Unity, 请回到IDE
-```
-
-### MCP Server
-
-当前已实现最小 FastMCP server，封装现有 Unity workflow。
-
-```powershell
-# 当前目录是 .claude/skills/denia-agent-toolkit
-uv run python server.py
-uv run mcp dev server.py
-
-# 当前目录是宿主项目根目录
-uv run python .claude/skills/denia-agent-toolkit/server.py
-uv run mcp dev .claude/skills/denia-agent-toolkit/server.py
 ```
 
 ## 开发
