@@ -22,6 +22,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageGrab, ImageStat
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.05
 
+# Keep only the last few lines nearest to StackTraceUtility to avoid swallowing unrelated Editor.log noise.
+KEY_MESSAGE_LINE_LIMIT = 5
+
 
 ERROR_PATTERNS = (
     re.compile(r"\berror\s+CS\d+\b", re.IGNORECASE),
@@ -37,15 +40,38 @@ IGNORE_ERROR_PATTERNS = (
     re.compile(r"\bwithout errors\b", re.IGNORECASE),
 )
 
+STACKTRACE_MARKER = "UnityEngine.StackTraceUtility:ExtractStackTrace ()"
+
+IGNORED_KEY_LINE_PATTERNS = (
+    re.compile(r"^\[.*\]$"),
+    re.compile(r"^\(Filename:", re.IGNORECASE),
+)
+
+STACK_FRAME_PATTERNS = (
+    re.compile(r"^\s*at\b", re.IGNORECASE),
+    re.compile(r"\(at .+\)$", re.IGNORECASE),
+    re.compile(
+        r"^[A-Za-z_][\w`<>.+-]*(?:\.[A-Za-z_][\w`<>.+-]*)*:[A-Za-z_][\w`<>.+-]*\s*\(",
+        re.IGNORECASE,
+    ),
+)
+
 
 class UnityAutomationError(RuntimeError):
     pass
+
+
+def matches_error_line(line: str) -> bool:
+    if any(pattern.search(line) for pattern in IGNORE_ERROR_PATTERNS):
+        return False
+    return any(pattern.search(line) for pattern in ERROR_PATTERNS)
 
 
 @dataclass(frozen=True)
 class Config:
     activation_timeout: float
     compile_timeout: float
+    post_play_log_wait_seconds: float
     verify_timeout: float
     poll_interval: float
     log_quiet_seconds: float
@@ -114,9 +140,14 @@ class EditorLogMonitor(threading.Thread):
         self.log_path = log_path
         self._stop_event = threading.Event()
         self._error_event = threading.Event()
+        self._lock = threading.Lock()
         self._recent_lines: deque[str] = deque(maxlen=40)
         self._error_lines: deque[str] = deque(maxlen=20)
+        self._captured_lines: deque[tuple[int, str]] = deque(maxlen=2000)
+        self._recent_capture_window: deque[tuple[int, str]] = deque(maxlen=32)
+        self._key_message_events: list[tuple[int, str]] = []
         self._error_context_remaining = 0
+        self._line_index = 0
         self._last_activity = time.monotonic()
 
     def run(self) -> None:
@@ -139,21 +170,15 @@ class EditorLogMonitor(threading.Thread):
                             time.sleep(0.2)
                             continue
 
-                        stripped = line.rstrip()
-                        if not stripped:
+                        line_text = line.rstrip("\r\n")
+                        self._last_activity = time.monotonic()
+                        if not line_text.strip():
+                            self._record_separator()
                             continue
 
-                        self._last_activity = time.monotonic()
-                        self._recent_lines.append(stripped)
-                        if self._matches_error(stripped):
-                            self._error_lines.append(stripped)
-                            self._error_event.set()
-                            self._error_context_remaining = 6
-                        elif self._error_context_remaining > 0:
-                            self._error_lines.append(stripped)
-                            self._error_context_remaining -= 1
+                        self._record_line(line_text)
             except OSError as exc:
-                self._recent_lines.append(f"[日志监控] {exc}")
+                self._record_line(f"[日志监控] {exc}", allow_error_match=False)
                 time.sleep(0.5)
 
     def stop(self) -> None:
@@ -162,27 +187,171 @@ class EditorLogMonitor(threading.Thread):
     def has_error(self) -> bool:
         return self._error_event.is_set()
 
+    def capture_marker(self) -> int:
+        with self._lock:
+            return self._line_index
+
+    def captured_lines_since(self, marker: int) -> list[str]:
+        with self._lock:
+            return [line for index, line in self._captured_lines if index > marker]
+
+    def key_messages_since(self, marker: int) -> list[str]:
+        with self._lock:
+            return [line for index, line in self._key_message_events if index > marker]
+
     def seconds_since_activity(self) -> float:
         return time.monotonic() - self._last_activity
 
     def format_recent_activity(self) -> str:
-        if not self._recent_lines:
+        with self._lock:
+            recent_lines = list(self._recent_lines)
+        if not recent_lines:
             return "开始监控后，Editor.log 暂时没有新增内容。"
-        return "最近的 Editor.log 输出:\n" + "\n".join(self._recent_lines)
+        return "最近的 Editor.log 输出:\n" + "\n".join(recent_lines)
 
     def format_recent_errors(self) -> str:
-        if not self._error_lines:
+        with self._lock:
+            error_lines = list(self._error_lines)
+        if not error_lines:
             return self.format_recent_activity()
-        return "检测到的 Editor.log 错误:\n" + "\n".join(self._error_lines)
+        return "检测到的 Editor.log 错误:\n" + "\n".join(error_lines)
+
+    def _record_separator(self) -> None:
+        with self._lock:
+            if self._captured_lines and self._captured_lines[-1][1] == "":
+                return
+            self._line_index += 1
+            self._captured_lines.append((self._line_index, ""))
+            self._recent_capture_window.append((self._line_index, ""))
+
+    def _record_line(self, line: str, *, allow_error_match: bool = True) -> None:
+        with self._lock:
+            if line == STACKTRACE_MARKER:
+                key_message = self._find_previous_key_message_locked()
+            else:
+                key_message = None
+
+            self._line_index += 1
+            self._recent_lines.append(line)
+            self._captured_lines.append((self._line_index, line))
+            self._recent_capture_window.append((self._line_index, line))
+            if key_message is not None:
+                self._key_message_events.append((self._line_index, key_message))
+            if allow_error_match and self._matches_error(line):
+                self._error_lines.append(line)
+                self._error_event.set()
+                self._error_context_remaining = 6
+            elif self._error_context_remaining > 0:
+                self._error_lines.append(line)
+                self._error_context_remaining -= 1
+
+    def _find_previous_key_message_locked(self) -> str | None:
+        message_lines_reversed: list[str] = []
+        pending_blank_count = 0
+        saw_content = False
+
+        for _, raw_line in reversed(self._recent_capture_window):
+            stripped = raw_line.strip()
+            if stripped == STACKTRACE_MARKER:
+                break
+            if not stripped:
+                if saw_content:
+                    pending_blank_count += 1
+                continue
+            if is_ignored_key_line(stripped) or is_stack_frame_line(raw_line):
+                if saw_content:
+                    break
+                continue
+
+            if pending_blank_count:
+                message_lines_reversed.extend([""] * pending_blank_count)
+                pending_blank_count = 0
+
+            saw_content = True
+            message_lines_reversed.append(raw_line)
+
+        if not saw_content:
+            return None
+
+        message_lines = list(reversed(message_lines_reversed))
+        while message_lines and not message_lines[0].strip():
+            message_lines.pop(0)
+        while message_lines and not message_lines[-1].strip():
+            message_lines.pop()
+        if not message_lines:
+            return None
+        if KEY_MESSAGE_LINE_LIMIT > 0:
+            message_lines = message_lines[-KEY_MESSAGE_LINE_LIMIT:]
+        normalized = normalize_key_message("\n".join(message_lines))
+        return normalized or None
 
     def _matches_error(self, line: str) -> bool:
-        if any(pattern.search(line) for pattern in IGNORE_ERROR_PATTERNS):
-            return False
-        return any(pattern.search(line) for pattern in ERROR_PATTERNS)
+        return matches_error_line(line)
 
 
 def log(message: str) -> None:
-    print(f"[Unity自动Play] {message}", flush=True)
+    print(f"[UnityAutoPlay] {message}", flush=True)
+
+
+def log_strategy(config: Config) -> None:
+    log("策略 激活=评分选窗+多策略+任务栏兜底")
+    log(
+        "策略 空闲="
+        f"log静默{config.log_quiet_seconds:.1f}s+状态{config.required_status_stability}次"
+        f"+按钮{config.required_play_stability}次"
+    )
+    log("策略 验证=点Play后检测按钮变化/蓝高亮")
+    log(
+        "策略 日志="
+        f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
+        f"因为Editor.log无法完整过滤出日志，所以每个日志会往前包含{KEY_MESSAGE_LINE_LIMIT}行再进行去重"
+    )
+
+
+def normalize_key_message(message: str) -> str:
+    normalized_lines: list[str] = []
+    for line in message.splitlines():
+        stripped = line.strip()
+        normalized_lines.append(stripped if stripped else "")
+
+    while normalized_lines and not normalized_lines[0]:
+        normalized_lines.pop(0)
+    while normalized_lines and not normalized_lines[-1]:
+        normalized_lines.pop()
+    return "\n".join(normalized_lines)
+
+
+def is_ignored_key_line(line: str) -> bool:
+    return any(pattern.search(line) for pattern in IGNORED_KEY_LINE_PATTERNS)
+
+
+def is_stack_frame_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped == STACKTRACE_MARKER:
+        return True
+    return any(pattern.search(stripped) for pattern in STACK_FRAME_PATTERNS)
+
+
+def summarize_key_messages(messages: list[str]) -> list[tuple[str, int]]:
+    ordered_counts: dict[str, int] = {}
+    for message in messages:
+        normalized = normalize_key_message(message)
+        if not normalized.strip():
+            continue
+        ordered_counts[normalized] = ordered_counts.get(normalized, 0) + 1
+    return list(ordered_counts.items())
+
+
+def print_captured_logs(summary: list[tuple[str, int]], wait_seconds: float) -> None:
+    if not summary:
+        log(f"Play后{wait_seconds:.0f}s无新增日志")
+        return
+
+    log(f"Play后关键日志 {wait_seconds:.0f}s:")
+    for index, (message, count) in enumerate(summary, start=1):
+        print(f"[UnityAutoPlay][日志 {index}][x{count}]\n{message}\n", flush=True)
 
 
 def save_debug_image(config: Config, image: Image.Image, stem: str) -> Path | None:
@@ -476,7 +645,7 @@ def try_activate_window_via_taskbar(window: Any, config: Config) -> bool:
     except Exception:
         button_text = "Unity"
 
-    log(f"常规激活失败，尝试点击任务栏中的 Unity 按钮: {button_text}")
+    log(f"尝试任务栏激活: {button_text}")
 
     try:
         button.click_input()
@@ -557,7 +726,7 @@ def find_unity_window() -> Any:
 
 def activate_window(window: Any, config: Config) -> Box:
     title = str(window.title).strip()
-    log(f"正在激活 Unity 窗口: {title}")
+    log(f"激活Unity: {title}")
 
     try:
         if bool(window.isMinimized):
@@ -574,7 +743,7 @@ def activate_window(window: Any, config: Config) -> Box:
         try:
             box = window_box(window)
             if is_window_active(window):
-                debug_log(config, "Unity 窗口已成为前台窗口。")
+                debug_log(config, "Unity已激活")
                 return box
         except Exception:
             break
@@ -582,7 +751,7 @@ def activate_window(window: Any, config: Config) -> Box:
         if strategy_index < len(ACTIVATION_STRATEGIES):
             strategy_name, strategy_action = ACTIVATION_STRATEGIES[strategy_index]
             strategy_index += 1
-            debug_log(config, f"尝试激活策略: {strategy_name}")
+            debug_log(config, f"激活策略: {strategy_name}")
             try:
                 strategy_action(window)
             except Exception:
@@ -590,13 +759,13 @@ def activate_window(window: Any, config: Config) -> Box:
         elif not taskbar_attempted and try_activate_window_via_taskbar(window, config):
             taskbar_attempted = True
             try:
-                debug_log(config, "任务栏兜底激活成功。")
+                debug_log(config, "任务栏激活成功")
                 return window_box(window)
             except Exception:
                 break
         else:
             taskbar_attempted = True
-            debug_log(config, "重复尝试直接调用窗口 activate。")
+            debug_log(config, "重试activate")
             try:
                 window.activate(wait=True, user=True)
             except Exception:
@@ -872,14 +1041,11 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
         if config.debug and status_state.red_samples == config.status_red_samples:
             saved_path = save_debug_image(config, status_image, "status-corner-warning")
             if saved_path is not None:
-                log(f"已保存右下角可疑状态截图: {saved_path}")
+                log(f"已保存状态截图: {saved_path}")
 
         log_quiet = log_monitor.seconds_since_activity() >= config.log_quiet_seconds
         if status_state.red_samples >= config.status_red_samples and not red_indicator_reported:
-            log(
-                "检测到 Unity 右下角可能出现了警告或错误提示；"
-                "当前仍以 Editor.log 作为主判断信号。"
-            )
+            log("状态角异常, 仍以Editor.log为准")
             red_indicator_reported = True
 
         if (
@@ -888,13 +1054,14 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
             and status_state.stable_samples >= config.required_status_stability
             and log_quiet
         ):
+            log("已空闲: log静默+状态稳定+按钮稳定")
             return candidate
 
         if candidate is None and status_state.stable_samples >= config.required_status_stability and log_quiet:
             if fallback_since is None:
                 fallback_since = time.monotonic()
             elif time.monotonic() - fallback_since >= 1.0:
-                log("Play 按钮启发式识别不够稳定，回退到工具栏中心估计位置。")
+                log("已空闲: 按钮不稳, 回退中心点")
                 return estimate_play_candidate(toolbar_box, current_window_box)
         else:
             fallback_since = None
@@ -902,11 +1069,11 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
         if time.monotonic() - last_report >= 2.5:
             score_text = f"{candidate.score:.1f}" if candidate is not None else "无"
             log(
-                "正在等待 Unity 进入空闲状态: "
-                f"按钮评分={score_text}, "
-                f"按钮稳定次数={stable_candidate_count}/{config.required_play_stability}, "
-                f"状态区稳定次数={status_state.stable_samples}/{config.required_status_stability}, "
-                f"日志是否安静={log_quiet}"
+                "等待空闲: "
+                f"分={score_text} "
+                f"按钮={stable_candidate_count}/{config.required_play_stability} "
+                f"状态={status_state.stable_samples}/{config.required_status_stability} "
+                f"静默={'Y' if log_quiet else 'N'}"
             )
             last_report = time.monotonic()
 
@@ -933,9 +1100,7 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
     before_image = grab_box(verification_box)
     before_blue_ratio = blue_ratio(before_image)
     pyautogui.click(candidate.center_x, candidate.center_y)
-    log(
-        f"已点击 Play 按钮，位置=({candidate.center_x}, {candidate.center_y})，来源={candidate.source}。"
-    )
+    log(f"已点Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
 
     time.sleep(0.08)
     pyautogui.moveTo(mouse_park_x, mouse_park_y)
@@ -967,6 +1132,24 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
         save_debug_image(config, before_image, "play-before-timeout")
         save_debug_image(config, after_image, "play-after-timeout")
     raise UnityAutomationError("已点击 Play，但无法确认 Unity 真的进入了播放模式。")
+
+
+def wait_and_print_post_play_logs(
+    log_monitor: EditorLogMonitor,
+    config: Config,
+    capture_marker: int,
+) -> bool:
+    wait_seconds = max(0.0, config.post_play_log_wait_seconds)
+    if wait_seconds > 0.0:
+        log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            time.sleep(min(config.poll_interval, max(0.05, deadline - time.monotonic())))
+
+    captured_lines = log_monitor.captured_lines_since(capture_marker)
+    key_messages = log_monitor.key_messages_since(capture_marker)
+    print_captured_logs(summarize_key_messages(key_messages), wait_seconds)
+    return any(matches_error_line(line) for line in captured_lines if line.strip())
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1021,6 +1204,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
     return Config(
         activation_timeout=args.activation_timeout,
         compile_timeout=args.timeout,
+        post_play_log_wait_seconds=10.0,
         verify_timeout=args.verify_timeout,
         poll_interval=args.poll_interval,
         log_quiet_seconds=max(args.poll_interval * 2.5, 1.0),
@@ -1041,9 +1225,10 @@ def main(argv: list[str] | None = None) -> int:
     log_monitor: EditorLogMonitor | None = None
 
     try:
+        log_strategy(config)
         editor_log_path = resolve_editor_log_path(config.editor_log_path)
         wait_for_path(editor_log_path, timeout=5.0)
-        log(f"正在监控 Unity Editor.log: {editor_log_path}")
+        log(f"监控日志: {editor_log_path}")
 
         log_monitor = EditorLogMonitor(editor_log_path)
         log_monitor.start()
@@ -1051,12 +1236,15 @@ def main(argv: list[str] | None = None) -> int:
         unity_window = find_unity_window()
         activate_window(unity_window, config)
         candidate = wait_for_ready_play_candidate(unity_window, log_monitor, config)
+        play_log_marker = log_monitor.capture_marker()
         click_play_button(unity_window, candidate, log_monitor, config)
 
-        log("Unity 已进入播放模式。")
+        log("已进入Play")
+        if wait_and_print_post_play_logs(log_monitor, config, play_log_marker):
+            raise UnityAutomationError("进入 Play 模式后的观察期内，Unity Editor.log 中出现了新的错误。")
         return 0
     except UnityAutomationError as exc:
-        print(f"[Unity自动Play] 错误: {exc}", file=sys.stderr)
+        print(f"[UnityAutoPlay] 错误: {exc}", file=sys.stderr)
         if log_monitor is not None:
             if log_monitor.has_error():
                 print(log_monitor.format_recent_errors(), file=sys.stderr)

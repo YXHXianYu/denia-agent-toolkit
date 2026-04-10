@@ -8,7 +8,7 @@
 
 使用方式支持：直接运行python脚本、Skill、MCP
 
-## 使用
+## 环境
 
 默认使用 `uv` 管理项目环境与依赖。
 
@@ -22,7 +22,9 @@ uv run python server.py
 uv run python scripts/unity-auto-play.py --help
 ```
 
-常用命令：
+### Unity Auto Play
+
+自动激活Unity窗口、等待编译、点击Play、等待10秒捕获日志、去重后打印到终端。
 
 ```powershell
 uv run python scripts/unity-auto-play.py --debug
