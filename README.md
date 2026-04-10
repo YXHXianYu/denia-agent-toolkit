@@ -28,9 +28,11 @@ uv sync
 ```powershell
 # 当前目录是 .claude/skills/denia-agent-toolkit
 uv run python scripts/unity-auto-play.py --debug
+uv run python scripts/unity-auto-play.py --renderdoc-capture --debug
 
 # 当前目录是宿主项目根目录
 uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --debug
+uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --renderdoc-capture --debug
 ```
 
 输出示例
@@ -38,7 +40,7 @@ uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --de
 ```
 [UnityAutoPlay] 策略 激活=评分选窗+多策略+任务栏兜底
 [UnityAutoPlay] 策略 空闲=log静默1.0s+状态5次+按钮3次
-[UnityAutoPlay] 策略 验证=点Play后检测按钮变化/蓝高亮
+[UnityAutoPlay] 策略 验证=点Play后检测Play激活态模板
 [UnityAutoPlay] 策略 日志=Play后观察10s+前5行去重+自动停Play
 [UnityAutoPlay] 策略 收尾=停Play后最小化Unity并回到IDE
 [UnityAutoPlay] 监控日志: C:\Users\xianhao.yu\AppData\Local\Unity\Editor\Editor.log
@@ -49,7 +51,7 @@ uv run python .claude/skills/denia-agent-toolkit/scripts/unity-auto-play.py --de
 [UnityAutoPlay] 已空闲: log静默+状态稳定+按钮稳定
 [UnityAutoPlay] 激活Unity: UnityFFTBloom - Environment_Free - Windows, Mac, Linux - Unity 2022.3.6f1 <DX12>
 [UnityAutoPlay] Unity已激活
-[UnityAutoPlay] 已点Play: (931, 66) 启发式识别
+[UnityAutoPlay] 已点Play: (931, 66) Play普通态模板匹配(1.00)
 [UnityAutoPlay] 已进入Play
 [UnityAutoPlay] Play已进入, 观察日志10s
 [UnityAutoPlay] Play后关键日志 10s。因为Editor.log不足以判断具体输出日志是哪些，所以脚本会向前包含5行。如果你发现日志被截断，请调整参数
@@ -62,7 +64,7 @@ OnRenderImage() possibly didn't write anything to the destination texture!
 
 [UnityAutoPlay] 激活Unity: UnityFFTBloom - Environment_Free - Windows, Mac, Linux - Unity 2022.3.6f1 <DX12>
 [UnityAutoPlay] Unity已激活
-[UnityAutoPlay] 10s到, 停Play: (931, 66) 启发式识别
+[UnityAutoPlay] 10s到, 停Play: (931, 66) Play激活态模板匹配(1.00)
 [UnityAutoPlay] 已停Play
 [UnityAutoPlay] 脚本执行完毕, 已最小化Unity, 请回到IDE
 ```

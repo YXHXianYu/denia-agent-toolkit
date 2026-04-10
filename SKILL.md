@@ -1,6 +1,6 @@
 ---
 name: denia-agent-toolkit
-description: "Use this skill when the user wants to use or extend this repository's automation workflow, especially the implemented Unity Editor external automation and its FastMCP wrapper: 激活Unity, 等待编译或导入完成, 点击Play, 观察Editor.log, 去重关键日志, 10秒后自动退出Play, or debug/modify the unity-auto-play and server.py flow. Also use it when deciding whether a task should be handled by the existing local script or the current MCP wrapper. Do not use this skill for Unreal Engine or RenderDoc workflows, because those parts are not implemented in this repository."
+description: "Use this skill when the user wants to use or extend this repository's automation workflow, especially the implemented Unity Editor external automation and its FastMCP wrapper: 激活Unity, 等待编译或导入完成, 点击Play, 观察Editor.log, 去重关键日志, 10秒后自动退出Play, optionally template-match the GameView RenderDoc capture button, or debug/modify the unity-auto-play and server.py flow. Also use it when deciding whether a task should be handled by the existing local script or the current MCP wrapper. Do not use this skill for Unreal Engine workflows or standalone RenderDoc analysis workflows, because those parts are not implemented in this repository."
 user-invocable: true
 ---
 
@@ -10,15 +10,16 @@ user-invocable: true
 
 This skill packages the current workflow knowledge for this repository.
 
-Today, the implemented surfaces are the external Unity workflow in [scripts/unity-auto-play.py](scripts/unity-auto-play.py) and the FastMCP wrapper in [server.py](server.py). There is still no implemented UE or RenderDoc automation yet.
+Today, the implemented surfaces are the external Unity workflow in [scripts/unity-auto-play.py](scripts/unity-auto-play.py) and the FastMCP wrapper in [server.py](server.py). There is still no implemented UE automation or standalone RenderDoc workflow yet.
 
-Do not overclaim repo capabilities. If the user asks for UE, RenderDoc, or MCP functionality, treat that as new implementation work rather than an existing ready-to-run feature.
+Do not overclaim repo capabilities. If the user asks for UE, standalone RenderDoc analysis, or broader MCP functionality, treat that as new implementation work rather than an existing ready-to-run feature.
 
 ## When To Use This Skill
 
 Use this skill when the request is about one of these tasks:
 
 - Running the existing Unity auto-play workflow.
+- Running or modifying the optional RenderDoc capture step inside the Unity auto-play workflow.
 - Debugging why the Unity auto-play workflow failed.
 - Modifying how the Unity auto-play workflow detects idle/compile completion.
 - Modifying how Play is entered, observed, logged, or closed.
@@ -39,7 +40,7 @@ Typical trigger phrases include:
 Do not use this skill for:
 
 - Unreal Engine automation that is not yet implemented in this repo.
-- RenderDoc capture or analysis workflows that are not yet implemented in this repo.
+- Standalone RenderDoc capture or analysis workflows that are not yet implemented in this repo.
 - General Unity gameplay code, shader authoring, or in-project rendering implementation that is unrelated to this toolkit's external automation.
 
 ## Current Implemented Surface
@@ -47,12 +48,13 @@ Do not use this skill for:
 ### Implemented
 
 - [scripts/unity-auto-play.py](scripts/unity-auto-play.py): external Unity Editor automation on Windows.
+- [scripts/unity-auto-play.py](scripts/unity-auto-play.py): optional RenderDoc capture-button click in Game view via template matching when `--renderdoc-capture` is enabled.
 - [server.py](server.py): FastMCP server that exposes toolkit status and wraps the Unity auto-play workflow.
 
 ### Not Implemented Yet
 
 - UE automation workflow.
-- RenderDoc workflow.
+- Standalone RenderDoc workflow.
 
 ## Workflow
 
@@ -61,7 +63,7 @@ When this skill is active, follow this process:
 1. Match the user's request against the actually implemented surface.
 2. If the request is covered by the Unity workflow, prefer using the existing script before inventing a new flow.
 3. If the request requires code changes, read [AGENTS.md](AGENTS.md) first and preserve the repo's conventions.
-4. If the request is only about behavior explanation, explain the real implemented heuristics rather than an idealized design.
+4. If the request is only about behavior explanation, explain the real implemented detection logic rather than an idealized design.
 5. If the request falls outside the implemented surface, say so clearly and treat it as a new feature request.
 
 ## Unity Workflow Reference
@@ -72,10 +74,13 @@ For the current Unity automation, the expected high-level behavior is:
 2. Wait until Unity looks idle enough to click Play.
 3. Click Play and verify that Play actually entered.
 4. Observe `Editor.log` for 10 seconds after entering Play.
-5. Extract key log blocks from the lines before `UnityEngine.StackTraceUtility:ExtractStackTrace ()`.
-6. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
-7. Automatically stop Play after the observation window.
-8. Minimize the Unity window after Play exits so the user can return to the IDE.
+5. If `--renderdoc-capture` is enabled, template-match the Game view RenderDoc Capture button at `min(5s, 观察时长 / 2)` and click it.
+6. Extract key log blocks from the lines before `UnityEngine.StackTraceUtility:ExtractStackTrace ()`.
+7. Keep at most the nearest `KEY_MESSAGE_LINE_LIMIT` lines per log block, then deduplicate and print them.
+8. Automatically stop Play after the observation window.
+9. Minimize the Unity window after Play exits so the user can return to the IDE.
+
+Today, the Play button uses template matching against `templates/play-button-idle.png` and `templates/play-button-active.png`; RenderDoc Capture uses template matching against `templates/renderdoc-capture-button.png` within the Game view toolbar bounds.
 
 If `Editor.log` reports an error immediately after clicking Play, describe the real behavior accurately: the script does not abort at once. It still tries to finish Play verification, the 10-second observation window, and automatic stop-Play cleanup before reporting the error.
 
@@ -83,7 +88,7 @@ When explaining "how compile completion is detected", describe the real heuristi
 
 - `Editor.log` has been quiet for a short window.
 - The bottom-right status area is stable for multiple samples.
-- The Play button candidate stays stable for multiple samples.
+- The idle Play template candidate stays stable for multiple samples.
 
 Do not describe this as a Unity internal API signal. It is an external heuristic.
 
@@ -111,7 +116,7 @@ When using this skill:
 
 - Keep terminal-oriented explanations concise.
 - Surface the actual current strategy, not just the outcome.
-- Preserve important implementation limits and heuristics.
+- Preserve important implementation limits, matching rules, and heuristics.
 - Do not hide missing functionality.
 - When behavior changes, update [AGENTS.md](AGENTS.md) and the relevant user-facing docs.
 

@@ -54,12 +54,18 @@ def build_unity_auto_play_command(
     compile_timeout: float,
     verify_timeout: float,
     poll_interval: float,
+    renderdoc_capture: bool,
+    renderdoc_template: str | None,
     debug_dir: str,
 ) -> list[str]:
     command = [sys.executable, str(UNITY_AUTO_PLAY_SCRIPT)]
 
     if debug:
         command.append("--debug")
+    if renderdoc_capture:
+        command.append("--renderdoc-capture")
+    if renderdoc_template:
+        command.extend(["--renderdoc-template", renderdoc_template])
     if editor_log:
         command.extend(["--editor-log", editor_log])
 
@@ -110,11 +116,11 @@ def toolkit_capabilities() -> str:
         "# Denia Agent Toolkit\n\n"
         "## Implemented\n"
         "- Unity external automation via scripts/unity-auto-play.py\n"
-        "- Unity window activation, idle detection, Play enter/exit, Editor.log observation, and post-run window minimization\n"
+        "- Unity window activation, idle detection, Play enter/exit, optional template-matched RenderDoc capture-button click, Editor.log observation, and post-run window minimization\n"
         "- MCP wrapper tools for capability inspection and running the Unity workflow\n\n"
         "## Not Implemented Yet\n"
         "- UE automation\n"
-        "- RenderDoc workflow\n"
+        "- Standalone RenderDoc workflow\n"
         "- Additional MCP tools beyond the Unity wrapper\n"
     )
 
@@ -129,13 +135,14 @@ def toolkit_status() -> ToolkitStatus:
         supported_platforms=["Windows"],
         implemented_workflows=[
             "Unity external auto-play workflow",
+            "Optional GameView RenderDoc capture button click via template matching during Unity auto-play",
             "Editor.log key log capture and deduplication",
             "Automatic Play stop after the observation window",
             "Automatic Unity window minimization after Play exits",
         ],
         pending_workflows=[
             "UE automation",
-            "RenderDoc workflow",
+            "Standalone RenderDoc workflow",
             "Additional MCP-native tools",
         ],
     )
@@ -156,9 +163,11 @@ async def unity_auto_play_run(
     compile_timeout: float = 300.0,
     verify_timeout: float = 5.0,
     poll_interval: float = 0.35,
+    renderdoc_capture: bool = False,
+    renderdoc_template: str | None = None,
     debug_dir: str = "logs/unity-auto-play",
 ) -> CommandResult:
-    """Run the external Unity auto-play workflow that activates Unity, enters Play, captures logs, and exits Play."""
+    """Run the external Unity auto-play workflow that activates Unity, enters Play, optionally triggers a template-matched RenderDoc capture, captures logs, and exits Play."""
     command = build_unity_auto_play_command(
         debug=debug,
         editor_log=editor_log,
@@ -166,6 +175,8 @@ async def unity_auto_play_run(
         compile_timeout=compile_timeout,
         verify_timeout=verify_timeout,
         poll_interval=poll_interval,
+        renderdoc_capture=renderdoc_capture,
+        renderdoc_template=renderdoc_template,
         debug_dir=debug_dir,
     )
     return await run_command(command, ctx=ctx)

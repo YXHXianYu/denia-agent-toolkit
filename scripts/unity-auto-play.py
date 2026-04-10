@@ -13,6 +13,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+import cv2
+import numpy as np
 import pyautogui
 import psutil
 import pywinctl
@@ -24,6 +26,13 @@ pyautogui.PAUSE = 0.05
 
 # Keep only the last few lines nearest to StackTraceUtility to avoid swallowing unrelated Editor.log noise.
 KEY_MESSAGE_LINE_LIMIT = 5
+RENDERDOC_CAPTURE_MAX_WAIT_SECONDS = 5.0
+PLAY_TEMPLATE_MATCH_THRESHOLD = 0.78
+RENDERDOC_TEMPLATE_MATCH_THRESHOLD = 0.78
+TEMPLATE_MATCH_SCALES = (0.90, 0.95, 1.0, 1.05, 1.10)
+DEFAULT_PLAY_IDLE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-idle.png"
+DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "play-button-active.png"
+DEFAULT_RENDERDOC_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "renderdoc-capture-button.png"
 
 
 ERROR_PATTERNS = (
@@ -80,6 +89,10 @@ class Config:
     status_hash_distance: int
     status_red_ratio_threshold: float
     status_red_samples: int
+    play_idle_template_path: Path
+    play_active_template_path: Path
+    renderdoc_capture: bool
+    renderdoc_template_path: Path
     debug: bool
     debug_dir: Path
     editor_log_path: Path | None
@@ -306,12 +319,15 @@ def log_strategy(config: Config) -> None:
         f"log静默{config.log_quiet_seconds:.1f}s+状态{config.required_status_stability}次"
         f"+按钮{config.required_play_stability}次"
     )
-    log("策略 验证=点Play后检测按钮变化/蓝高亮")
+    log("策略 验证=点Play后检测Play激活态模板")
     log(
         "策略 日志="
         f"Play后观察{config.post_play_log_wait_seconds:.0f}s+"
         f"前{KEY_MESSAGE_LINE_LIMIT}行去重+自动停Play"
     )
+    if config.renderdoc_capture:
+        renderdoc_wait = renderdoc_capture_wait_seconds(config.post_play_log_wait_seconds)
+        log(f"策略 截帧=Play后{renderdoc_wait:.1f}s点RenderDoc+模板匹配")
     log("策略 收尾=停Play后最小化Unity并回到IDE")
 
 
@@ -806,6 +822,51 @@ def build_status_box(box: Box) -> Box:
     return Box(left=left, top=top, width=width, height=height)
 
 
+def get_unity_pane_box(window: Any, pane_name: str) -> Box | None:
+    if platform.system() != "Windows":
+        return None
+
+    target_title = str(getattr(window, "title", "") or "").strip()
+    if not target_title:
+        return None
+
+    try:
+        from pywinauto import Desktop
+    except Exception:
+        return None
+
+    try:
+        for candidate in Desktop(backend="uia").windows():
+            if str(candidate.window_text() or "").strip() != target_title:
+                continue
+            for child in candidate.children():
+                if str(child.window_text() or "").strip() != pane_name:
+                    continue
+                rect = child.rectangle()
+                if rect.right <= rect.left or rect.bottom <= rect.top:
+                    return None
+                return Box(
+                    left=int(rect.left),
+                    top=int(rect.top),
+                    width=int(rect.right - rect.left),
+                    height=int(rect.bottom - rect.top),
+                )
+    except Exception:
+        return None
+
+    return None
+
+
+def build_game_view_toolbar_box(game_view_box: Box) -> Box:
+    height = max(36, min(48, game_view_box.height // 12 + 8))
+    return Box(
+        left=game_view_box.left,
+        top=game_view_box.top,
+        width=game_view_box.width,
+        height=height,
+    )
+
+
 def clamp_sample_box(sample_box: Box, outer_box: Box) -> Box:
     left = max(sample_box.left, outer_box.left)
     top = max(sample_box.top, outer_box.top)
@@ -874,136 +935,130 @@ def update_status_corner_state(
     )
 
 
-@lru_cache(maxsize=None)
-def triangle_mask(size: int) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, int], ...]]:
-    mask = Image.new("1", (size, size), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.polygon(
-        [(1, 1), (1, size - 2), (size - 2, size // 2)],
-        fill=1,
-    )
-
-    inside: list[tuple[int, int]] = []
-    outside: list[tuple[int, int]] = []
-    for y in range(size):
-        for x in range(size):
-            if mask.getpixel((x, y)):
-                inside.append((x, y))
-            else:
-                outside.append((x, y))
-    return tuple(inside), tuple(outside)
+def renderdoc_capture_wait_seconds(total_wait_seconds: float) -> float:
+    return max(0.0, min(RENDERDOC_CAPTURE_MAX_WAIT_SECONDS, total_wait_seconds / 2.0))
 
 
-def estimate_play_candidate(toolbar_box: Box, window_box_value: Box) -> PlayCandidate:
-    center_x = window_box_value.left + window_box_value.width // 2
-    center_y = toolbar_box.top + toolbar_box.height // 2
+@lru_cache(maxsize=8)
+def load_grayscale_template(template_path_text: str) -> np.ndarray:
+    template_path = Path(template_path_text)
+    if not template_path.exists():
+        raise UnityAutomationError(f"找不到模板图: {template_path}")
+
+    template_image = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+    if template_image is None or template_image.size == 0:
+        raise UnityAutomationError(f"无法读取模板图: {template_path}")
+    return template_image
+
+
+def find_template_candidate(
+    search_image: Image.Image,
+    search_box: Box,
+    window_box_value: Box,
+    *,
+    template_path: Path,
+    threshold: float,
+    label: str,
+) -> PlayCandidate | None:
+    if not template_path.exists():
+        raise UnityAutomationError(f"找不到{label}模板图: {template_path}")
+
+    search_gray = cv2.cvtColor(np.array(search_image.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    template_gray = load_grayscale_template(str(template_path))
+
+    best_match: tuple[float, int, int, int, int] | None = None
+    for scale in TEMPLATE_MATCH_SCALES:
+        scaled_width = max(1, int(round(template_gray.shape[1] * scale)))
+        scaled_height = max(1, int(round(template_gray.shape[0] * scale)))
+        if scaled_width > search_gray.shape[1] or scaled_height > search_gray.shape[0]:
+            continue
+
+        if scale == 1.0:
+            scaled_template = template_gray
+        else:
+            scaled_template = cv2.resize(
+                template_gray,
+                (scaled_width, scaled_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+        result = cv2.matchTemplate(search_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
+        _, max_value, _, max_location = cv2.minMaxLoc(result)
+        if best_match is None or max_value > best_match[0]:
+            best_match = (
+                float(max_value),
+                int(max_location[0]),
+                int(max_location[1]),
+                scaled_width,
+                scaled_height,
+            )
+
+    if best_match is None or best_match[0] < threshold:
+        return None
+
+    score, left, top, width, height = best_match
+    global_center_x = search_box.left + left + width // 2
+    global_center_y = search_box.top + top + height // 2
     sample_box = clamp_sample_box(
-        Box(center_x - 18, center_y - 18, 36, 36),
+        Box(global_center_x - 18, global_center_y - 18, 36, 36),
         window_box_value,
     )
     return PlayCandidate(
-        center_x=center_x,
-        center_y=center_y,
-        size=18,
-        score=0.0,
+        center_x=global_center_x,
+        center_y=global_center_y,
+        size=max(width, height),
+        score=score,
         sample_box=sample_box,
-        source="几何兜底",
+        source=f"{label}模板匹配({score:.2f})",
     )
 
 
-def find_play_candidate(toolbar_image: Image.Image, toolbar_box: Box, window_box_value: Box) -> PlayCandidate | None:
-    gray = toolbar_image.convert("L")
-    pixels = gray.load()
-    width, height = gray.size
-    target_x = width // 2
-    target_y = height // 2
-    best: PlayCandidate | None = None
-
-    # 在工具栏中心附近搜索较亮的右向三角形。
-    for size in (12, 14, 16, 18):
-        inside, outside = triangle_mask(size)
-        for y in range(0, max(1, height - size), 2):
-            for x in range(0, max(1, width - size), 2):
-                probe_x = x + max(1, size // 3)
-                probe_y = y + size // 2
-                if pixels[probe_x, probe_y] < 110:
-                    continue
-
-                inside_sum = 0
-                for dx, dy in inside:
-                    inside_sum += pixels[x + dx, y + dy]
-                outside_sum = 0
-                for dx, dy in outside:
-                    outside_sum += pixels[x + dx, y + dy]
-
-                inside_mean = inside_sum / len(inside)
-                outside_mean = outside_sum / len(outside)
-                contrast = inside_mean - outside_mean
-                if contrast < 18:
-                    continue
-
-                center_x = x + size // 2
-                center_y = y + size // 2
-                distance_penalty = abs(center_x - target_x) * 0.18 + abs(center_y - target_y) * 0.12
-                score = contrast - distance_penalty
-                if score < 18:
-                    continue
-
-                global_center_x = toolbar_box.left + center_x
-                global_center_y = toolbar_box.top + center_y
-                sample_box = clamp_sample_box(
-                    Box(global_center_x - 18, global_center_y - 18, 36, 36),
-                    window_box_value,
-                )
-
-                candidate = PlayCandidate(
-                    center_x=global_center_x,
-                    center_y=global_center_y,
-                    size=size,
-                    score=score,
-                    sample_box=sample_box,
-                    source="启发式识别",
-                )
-                if best is None or candidate.score > best.score:
-                    best = candidate
-
-    if best is None:
-        return None
-
-    toolbar_center_x = window_box_value.left + window_box_value.width // 2
-    if abs(best.center_x - toolbar_center_x) > 56:
-        return None
-    return best
-
-
-def is_same_candidate(previous: PlayCandidate | None, current: PlayCandidate | None) -> bool:
-    if previous is None or current is None:
-        return False
-    return (
-        abs(previous.center_x - current.center_x) <= 6
-        and abs(previous.center_y - current.center_y) <= 6
-        and previous.source == current.source
+def find_play_idle_candidate(
+    toolbar_image: Image.Image,
+    toolbar_box: Box,
+    window_box_value: Box,
+    config: Config,
+) -> PlayCandidate | None:
+    return find_template_candidate(
+        toolbar_image,
+        toolbar_box,
+        window_box_value,
+        template_path=config.play_idle_template_path,
+        threshold=PLAY_TEMPLATE_MATCH_THRESHOLD,
+        label="Play普通态",
     )
 
 
-def image_difference_score(before: Image.Image, after: Image.Image) -> float:
-    diff = ImageChops.difference(before.convert("RGB"), after.convert("RGB"))
-    means = ImageStat.Stat(diff).mean
-    return sum(means) / len(means)
+def find_play_active_candidate(
+    toolbar_image: Image.Image,
+    toolbar_box: Box,
+    window_box_value: Box,
+    config: Config,
+) -> PlayCandidate | None:
+    return find_template_candidate(
+        toolbar_image,
+        toolbar_box,
+        window_box_value,
+        template_path=config.play_active_template_path,
+        threshold=PLAY_TEMPLATE_MATCH_THRESHOLD,
+        label="Play激活态",
+    )
 
 
-def blue_ratio(image: Image.Image) -> float:
-    rgb_image = image.convert("RGB")
-    pixels = rgb_image.load()
-    total = 0
-    blue_like = 0
-    for y in range(rgb_image.height):
-        for x in range(rgb_image.width):
-            red, green, blue = pixels[x, y]
-            total += 1
-            if blue >= 110 and blue > red + 12 and blue > green + 12:
-                blue_like += 1
-    return blue_like / total if total else 0.0
+def find_renderdoc_capture_candidate(
+    toolbar_image: Image.Image,
+    toolbar_box: Box,
+    window_box_value: Box,
+    template_path: Path,
+) -> PlayCandidate | None:
+    return find_template_candidate(
+        toolbar_image,
+        toolbar_box,
+        window_box_value,
+        template_path=template_path,
+        threshold=RENDERDOC_TEMPLATE_MATCH_THRESHOLD,
+        label="RenderDoc",
+    )
 
 
 def parking_point(window_box_value: Box, avoid_box: Box) -> tuple[int, int]:
@@ -1024,9 +1079,7 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
     deadline = time.monotonic() + config.compile_timeout
     last_report = 0.0
     status_state = StatusCornerState()
-    previous_candidate: PlayCandidate | None = None
     stable_candidate_count = 0
-    fallback_since: float | None = None
     red_indicator_reported = False
 
     while time.monotonic() < deadline:
@@ -1036,14 +1089,11 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
         current_window_box = window_box(window)
         toolbar_box = build_toolbar_box(current_window_box)
         toolbar_image = grab_box(toolbar_box)
-        candidate = find_play_candidate(toolbar_image, toolbar_box, current_window_box)
-        if is_same_candidate(previous_candidate, candidate):
+        candidate = find_play_idle_candidate(toolbar_image, toolbar_box, current_window_box, config)
+        if candidate is not None:
             stable_candidate_count += 1
-        elif candidate is not None:
-            stable_candidate_count = 1
         else:
             stable_candidate_count = 0
-        previous_candidate = candidate
 
         status_box = build_status_box(current_window_box)
         status_image = grab_box(status_box)
@@ -1068,15 +1118,6 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
             log("已空闲: log静默+状态稳定+按钮稳定")
             return candidate
 
-        if candidate is None and status_state.stable_samples >= config.required_status_stability and log_quiet:
-            if fallback_since is None:
-                fallback_since = time.monotonic()
-            elif time.monotonic() - fallback_since >= 1.0:
-                log("已空闲: 按钮不稳, 回退中心点")
-                return estimate_play_candidate(toolbar_box, current_window_box)
-        else:
-            fallback_since = None
-
         if time.monotonic() - last_report >= 2.5:
             score_text = f"{candidate.score:.1f}" if candidate is not None else "无"
             log(
@@ -1098,18 +1139,14 @@ def wait_for_ready_play_candidate(window: Any, log_monitor: EditorLogMonitor, co
 
 def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: EditorLogMonitor, config: Config) -> None:
     current_window_box = window_box(window)
-    verification_box = clamp_sample_box(
-        Box(candidate.center_x - 32, candidate.center_y - 24, 64, 48),
-        current_window_box,
-    )
-    mouse_park_x, mouse_park_y = parking_point(current_window_box, verification_box)
+    toolbar_box = build_toolbar_box(current_window_box)
+    mouse_park_x, mouse_park_y = parking_point(current_window_box, toolbar_box)
 
     activate_window(window, config)
     pyautogui.moveTo(mouse_park_x, mouse_park_y)
     time.sleep(config.poll_interval)
 
-    before_image = grab_box(verification_box)
-    before_blue_ratio = blue_ratio(before_image)
+    before_image = grab_box(toolbar_box)
     verify_log_marker = log_monitor.capture_marker()
     pyautogui.click(candidate.center_x, candidate.center_y)
     log(f"已点Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
@@ -1126,11 +1163,11 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
             error_seen_during_verify = True
 
         time.sleep(config.poll_interval)
-        after_image = grab_box(verification_box)
-        diff_score = image_difference_score(before_image, after_image)
-        after_blue_ratio = blue_ratio(after_image)
-        blue_gain = after_blue_ratio - before_blue_ratio
-        if diff_score >= 8.0 or (blue_gain >= 0.025 and after_blue_ratio >= 0.03):
+        current_window_box = window_box(window)
+        toolbar_box = build_toolbar_box(current_window_box)
+        after_image = grab_box(toolbar_box)
+        active_candidate = find_play_active_candidate(after_image, toolbar_box, current_window_box, config)
+        if active_candidate is not None:
             stable_verifications += 1
         else:
             stable_verifications = 0
@@ -1147,31 +1184,67 @@ def click_play_button(window: Any, candidate: PlayCandidate, log_monitor: Editor
     raise UnityAutomationError("已点击 Play，但无法确认 Unity 真的进入了播放模式。")
 
 
-def resolve_current_play_candidate(window: Any) -> PlayCandidate:
+def click_renderdoc_capture_button(window: Any, config: Config) -> None:
+    activate_window(window, config)
+    current_window_box = window_box(window)
+    game_view_box = get_unity_pane_box(window, "UnityEditor.GameView")
+    if game_view_box is None:
+        raise UnityAutomationError("无法定位 UnityEditor.GameView，无法触发 RenderDoc 截帧。")
+
+    toolbar_box = build_game_view_toolbar_box(game_view_box)
+    toolbar_image = grab_box(toolbar_box)
+    candidate = find_renderdoc_capture_candidate(
+        toolbar_image,
+        toolbar_box,
+        current_window_box,
+        config.renderdoc_template_path,
+    )
+    if candidate is None:
+        if config.debug:
+            save_debug_image(config, toolbar_image, "renderdoc-toolbar-miss")
+        raise UnityAutomationError(
+            "RenderDoc 模板匹配失败，没有在 Game 视图顶条中找到 Capture 按钮。"
+            f"模板: {config.renderdoc_template_path}。"
+            "请确认模板裁剪准确、Game 视图可见且已启用 RenderDoc 集成。"
+        )
+
+    mouse_park_x, mouse_park_y = parking_point(current_window_box, toolbar_box)
+    if config.debug:
+        save_debug_image(config, toolbar_image, "renderdoc-toolbar-probe")
+
+    pyautogui.moveTo(mouse_park_x, mouse_park_y)
+    time.sleep(config.poll_interval)
+    pyautogui.click(candidate.center_x, candidate.center_y)
+    log(f"RenderDoc截帧: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
+    time.sleep(0.08)
+    pyautogui.moveTo(mouse_park_x, mouse_park_y)
+
+
+def resolve_current_play_candidate(window: Any, config: Config) -> PlayCandidate:
     current_window_box = window_box(window)
     toolbar_box = build_toolbar_box(current_window_box)
     toolbar_image = grab_box(toolbar_box)
-    candidate = find_play_candidate(toolbar_image, toolbar_box, current_window_box)
+    candidate = find_play_active_candidate(toolbar_image, toolbar_box, current_window_box, config)
     if candidate is not None:
         return candidate
-    return estimate_play_candidate(toolbar_box, current_window_box)
+    raise UnityAutomationError(
+        "没有找到处于激活态的 Play 按钮。"
+        f"模板: {config.play_active_template_path}。"
+        "请确认当前确实已经进入 Play，且模板裁剪正确。"
+    )
 
 
 def stop_play_button(window: Any, config: Config) -> None:
-    candidate = resolve_current_play_candidate(window)
+    candidate = resolve_current_play_candidate(window, config)
     current_window_box = window_box(window)
-    verification_box = clamp_sample_box(
-        Box(candidate.center_x - 32, candidate.center_y - 24, 64, 48),
-        current_window_box,
-    )
-    mouse_park_x, mouse_park_y = parking_point(current_window_box, verification_box)
+    toolbar_box = build_toolbar_box(current_window_box)
+    mouse_park_x, mouse_park_y = parking_point(current_window_box, toolbar_box)
 
     activate_window(window, config)
     pyautogui.moveTo(mouse_park_x, mouse_park_y)
     time.sleep(config.poll_interval)
 
-    before_image = grab_box(verification_box)
-    before_blue_ratio = blue_ratio(before_image)
+    before_image = grab_box(toolbar_box)
     pyautogui.click(candidate.center_x, candidate.center_y)
     log(f"10s到, 停Play: ({candidate.center_x}, {candidate.center_y}) {candidate.source}")
 
@@ -1183,11 +1256,11 @@ def stop_play_button(window: Any, config: Config) -> None:
     stable_verifications = 0
     while time.monotonic() < deadline:
         time.sleep(config.poll_interval)
-        after_image = grab_box(verification_box)
-        diff_score = image_difference_score(before_image, after_image)
-        after_blue_ratio = blue_ratio(after_image)
-        blue_drop = before_blue_ratio - after_blue_ratio
-        if diff_score >= 8.0 or blue_drop >= 0.015:
+        current_window_box = window_box(window)
+        toolbar_box = build_toolbar_box(current_window_box)
+        after_image = grab_box(toolbar_box)
+        idle_candidate = find_play_idle_candidate(after_image, toolbar_box, current_window_box, config)
+        if idle_candidate is not None:
             stable_verifications += 1
         else:
             stable_verifications = 0
@@ -1223,16 +1296,31 @@ def minimize_window(window: Any, config: Config) -> None:
 
 
 def wait_and_print_post_play_logs(
+    window: Any,
     log_monitor: EditorLogMonitor,
     config: Config,
     capture_marker: int,
 ) -> bool:
     wait_seconds = max(0.0, config.post_play_log_wait_seconds)
+    renderdoc_wait_seconds = renderdoc_capture_wait_seconds(wait_seconds)
+    renderdoc_capture_completed = not config.renderdoc_capture
     if wait_seconds > 0.0:
         log(f"Play已进入, 观察日志{wait_seconds:.0f}s")
+        if config.renderdoc_capture:
+            log(f"RenderDoc将在{renderdoc_wait_seconds:.1f}s时截帧")
+        start_time = time.monotonic()
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
+            if config.renderdoc_capture and not renderdoc_capture_completed:
+                elapsed = time.monotonic() - start_time
+                if elapsed >= renderdoc_wait_seconds:
+                    click_renderdoc_capture_button(window, config)
+                    renderdoc_capture_completed = True
+                    continue
             time.sleep(min(config.poll_interval, max(0.05, deadline - time.monotonic())))
+
+    if config.renderdoc_capture and not renderdoc_capture_completed:
+        click_renderdoc_capture_button(window, config)
 
     captured_lines = log_monitor.captured_lines_since(capture_marker)
     key_messages = log_monitor.key_messages_since(capture_marker)
@@ -1275,6 +1363,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="窗口、日志、状态区轮询间隔，单位为秒。",
     )
     parser.add_argument(
+        "--renderdoc-capture",
+        action="store_true",
+        help=(
+            "进入 Play 后，在观察窗口中点按 Game 视图的 RenderDoc Capture 按钮。"
+            "触发时机为 min(5s, 观察时长 / 2)。"
+        ),
+    )
+    parser.add_argument(
+        "--renderdoc-template",
+        type=Path,
+        default=DEFAULT_RENDERDOC_TEMPLATE_PATH,
+        help=(
+            "RenderDoc Capture 按钮模板图路径。默认读取仓库根目录下的 templates/renderdoc-capture-button.png。"
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="保存调试截图。",
@@ -1301,6 +1405,10 @@ def config_from_args(args: argparse.Namespace) -> Config:
         status_hash_distance=3,
         status_red_ratio_threshold=0.0045,
         status_red_samples=3,
+        play_idle_template_path=DEFAULT_PLAY_IDLE_TEMPLATE_PATH,
+        play_active_template_path=DEFAULT_PLAY_ACTIVE_TEMPLATE_PATH,
+        renderdoc_capture=bool(args.renderdoc_capture),
+        renderdoc_template_path=args.renderdoc_template.expanduser(),
         debug=bool(args.debug),
         debug_dir=args.debug_dir,
         editor_log_path=args.editor_log,
@@ -1311,6 +1419,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config = config_from_args(args)
     log_monitor: EditorLogMonitor | None = None
+    unity_window: Any | None = None
 
     try:
         log_strategy(config)
@@ -1328,9 +1437,22 @@ def main(argv: list[str] | None = None) -> int:
         click_play_button(unity_window, candidate, log_monitor, config)
 
         log("已进入Play")
-        has_post_play_error = wait_and_print_post_play_logs(log_monitor, config, play_log_marker)
-        stop_play_button(unity_window, config)
+        has_post_play_error = False
+        delayed_errors: list[str] = []
+        try:
+            has_post_play_error = wait_and_print_post_play_logs(unity_window, log_monitor, config, play_log_marker)
+        except UnityAutomationError as exc:
+            delayed_errors.append(str(exc))
+
+        try:
+            stop_play_button(unity_window, config)
+        except UnityAutomationError as exc:
+            delayed_errors.append(f"收尾失败: {exc}")
+
         minimize_window(unity_window, config)
+
+        if delayed_errors:
+            raise UnityAutomationError("\n".join(delayed_errors))
         if has_post_play_error:
             raise UnityAutomationError("进入 Play 模式后的观察期内，Unity Editor.log 中出现了新的错误。")
         return 0
