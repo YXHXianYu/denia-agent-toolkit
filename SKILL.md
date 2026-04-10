@@ -1,6 +1,6 @@
 ---
 name: denia-agent-toolkit
-description: "Use this skill when the user wants to use or extend this repository's local automation workflow, especially for Unity Editor external automation: 激活Unity, 等待编译或导入完成, 点击Play, 观察Editor.log, 去重关键日志, 10秒后自动退出Play, or debug/modify the unity-auto-play flow. Also use it when deciding whether a task should be handled by the existing local script or a future MCP tool. Do not use this skill for Unreal Engine, RenderDoc, or MCP server implementation yet, because those parts are not implemented in this repository."
+description: "Use this skill when the user wants to use or extend this repository's automation workflow, especially the implemented Unity Editor external automation and its FastMCP wrapper: 激活Unity, 等待编译或导入完成, 点击Play, 观察Editor.log, 去重关键日志, 10秒后自动退出Play, or debug/modify the unity-auto-play and server.py flow. Also use it when deciding whether a task should be handled by the existing local script or the current MCP wrapper. Do not use this skill for Unreal Engine or RenderDoc workflows, because those parts are not implemented in this repository."
 user-invocable: true
 ---
 
@@ -10,7 +10,7 @@ user-invocable: true
 
 This skill packages the current workflow knowledge for this repository.
 
-Today, the only implemented automation surface is the external Unity workflow in [scripts/unity-auto-play.py](scripts/unity-auto-play.py). The MCP server entry in [server.py](server.py) is still a placeholder, and there is no implemented UE or RenderDoc automation yet.
+Today, the implemented surfaces are the external Unity workflow in [scripts/unity-auto-play.py](scripts/unity-auto-play.py) and the FastMCP wrapper in [server.py](server.py). There is still no implemented UE or RenderDoc automation yet.
 
 Do not overclaim repo capabilities. If the user asks for UE, RenderDoc, or MCP functionality, treat that as new implementation work rather than an existing ready-to-run feature.
 
@@ -40,7 +40,6 @@ Do not use this skill for:
 
 - Unreal Engine automation that is not yet implemented in this repo.
 - RenderDoc capture or analysis workflows that are not yet implemented in this repo.
-- Claiming that [server.py](server.py) is already a working MCP server.
 - General Unity gameplay code, shader authoring, or in-project rendering implementation that is unrelated to this toolkit's external automation.
 
 ## Current Implemented Surface
@@ -48,10 +47,10 @@ Do not use this skill for:
 ### Implemented
 
 - [scripts/unity-auto-play.py](scripts/unity-auto-play.py): external Unity Editor automation on Windows.
+- [server.py](server.py): FastMCP server that exposes toolkit status and wraps the Unity auto-play workflow.
 
 ### Not Implemented Yet
 
-- [server.py](server.py): MCP server placeholder only.
 - UE automation workflow.
 - RenderDoc workflow.
 
@@ -96,7 +95,7 @@ uv run python scripts/unity-auto-play.py --help
 uv run python scripts/unity-auto-play.py --debug
 ```
 
-If the user asks about MCP routing or tool registration, be explicit that [server.py](server.py) is not implemented yet.
+If the user asks about MCP routing or tool registration, explain that [server.py](server.py) is implemented as a minimal wrapper server today, and that broader MCP tool coverage is still pending.
 
 ## Output Expectations
 
@@ -113,7 +112,7 @@ When using this skill:
 - [scripts/unity-auto-play.py](scripts/unity-auto-play.py): main implemented workflow.
 - [AGENTS.md](AGENTS.md): repo conventions and current behavior contract.
 - [README.md](README.md): concise project overview.
-- [server.py](server.py): current MCP placeholder.
+- [server.py](server.py): current FastMCP server entry.
 
 ## Example Requests
 

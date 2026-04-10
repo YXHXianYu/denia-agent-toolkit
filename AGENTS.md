@@ -26,6 +26,15 @@
   - 右下角状态区连续多个采样保持稳定。
   - 顶部工具栏的 Play 按钮候选连续稳定出现。
 
+## MCP Server 约定
+
+- `server.py` 当前已落地为最小 FastMCP server。
+- 当前 MCP 工具只封装已有 Unity 能力，不要在 MCP 层再复制一套独立的 Unity UI 自动化实现。
+- 当前已提供的工具名为：`toolkit_status`、`unity_auto_play_help`、`unity_auto_play_run`。
+- 当前默认传输为 stdio；`streamable-http` 只作为调试或集成时的可选运行方式。
+- 如果后续新增 MCP 工具，优先复用现有脚本或明确的工作流 helper，避免把复杂 UI 逻辑分散到多个入口。
+- 如果 MCP 能力边界、工具名或运行方式发生变化，必须同时更新 `README.md`、`AGENTS.md` 和 `SKILL.md`。
+
 ## 技术选择
 
 - 不直接使用 Win32 API，也不要在这个脚本里手写 `pywin32` 级别调用。

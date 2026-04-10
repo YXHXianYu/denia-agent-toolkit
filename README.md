@@ -60,6 +60,15 @@ OnRenderImage() possibly didn't write anything to the destination texture!
 [UnityAutoPlay] 已停Play
 ```
 
+### MCP Server
+
+当前已实现最小 FastMCP server，封装现有 Unity workflow。
+
+```powershell
+uv run python server.py
+uv run mcp dev server.py
+```
+
 ## 开发
 
 详细实现约定、行为说明和维护边界见 `AGENTS.md`。
